@@ -1,0 +1,18 @@
+{
+  "format": "poser.character/1",
+  "name": "Potat",
+  "heightCm": 210,
+  "color": "#d8a86a",
+  "proportions": {
+    "headsTall": 6.4,
+    "neckLength": 1,
+    "torsoLength": 1.05,
+    "legLength": 1.1,
+    "armLength": 1.05,
+    "handSize": 1.1,
+    "footSize": 1.1,
+    "shoulderWidth": 1.35,
+    "hipWidth": 1.1
+  },
+  "build": { "weight": 0.25, "muscle": 0.6, "chest": 0 }
+}

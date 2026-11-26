@@ -1,0 +1,18 @@
+{
+  "format": "poser.character/1",
+  "name": "Bush",
+  "heightCm": 110,
+  "color": "#8fc48a",
+  "proportions": {
+    "headsTall": 3.6,
+    "neckLength": 0.6,
+    "torsoLength": 1,
+    "legLength": 0.85,
+    "armLength": 0.85,
+    "handSize": 0.9,
+    "footSize": 0.9,
+    "shoulderWidth": 0.9,
+    "hipWidth": 1
+  },
+  "build": { "weight": 0.1, "muscle": 0, "chest": 0 }
+}

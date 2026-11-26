@@ -1,0 +1,18 @@
+{
+  "format": "poser.character/1",
+  "name": "Seana",
+  "heightCm": 174,
+  "color": "#c9a6d9",
+  "proportions": {
+    "headsTall": 5.7,
+    "neckLength": 0.9,
+    "torsoLength": 1,
+    "legLength": 1,
+    "armLength": 1,
+    "handSize": 0.95,
+    "footSize": 0.95,
+    "shoulderWidth": 0.95,
+    "hipWidth": 1.35
+  },
+  "build": { "weight": 0.85, "muscle": 0.1, "chest": 0.9 }
+}

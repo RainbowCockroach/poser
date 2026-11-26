@@ -1,0 +1,18 @@
+{
+  "format": "poser.character/1",
+  "name": "not mad",
+  "heightCm": 185,
+  "color": "#e3d39a",
+  "proportions": {
+    "headsTall": 6.4,
+    "neckLength": 1.1,
+    "torsoLength": 0.95,
+    "legLength": 1.4,
+    "armLength": 1.15,
+    "handSize": 1.05,
+    "footSize": 1,
+    "shoulderWidth": 1,
+    "hipWidth": 0.9
+  },
+  "build": { "weight": -0.5, "muscle": 0.2, "chest": 0 }
+}
