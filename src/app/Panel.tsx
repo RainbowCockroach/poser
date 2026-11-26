@@ -1,6 +1,7 @@
 /*
  * Edit panel: pick a character, pose its joints with anatomical sliders, mirror poses, apply poses
  * from the library, shape its body, place it, and open/save scene, character and pose files for sharing.
+ * Scene-wide sections below the character: lights (presets or one by one) and saving the view as a PNG.
  * Joint sliders only allow the range a real body can do (limits live in core/pose.ts).
  * "My poses" are kept in this browser (localStorage); download a pose to share it.
  */
@@ -10,7 +11,8 @@ import { useState, type ChangeEvent } from 'react';
 import { CONTROLS, mirrorPose, type Pose, type PoseFile } from '../core/pose';
 import { dropToFloor } from '../core/reach';
 import { buildRig, DEFAULT_PROFILE, normalizeProfile, type CharacterProfile } from '../core/rig';
-import { newCharacterId, type SceneCharacter, type SceneFile } from './App';
+import { DEFAULT_LIGHTS, LIGHT_PRESETS, MAX_INTENSITY, newLight, normalizeLight, placementOf, positionFromPlacement, type LightKind, type LightPlacement } from '../core/lights';
+import { DEFAULT_BACKGROUND, newCharacterId, newLightId, type ExportRequest, type LightEntry, type SceneCharacter, type SceneFile, type SceneState } from './App';
 // #endregion
 
 // #region Config
@@ -30,6 +32,13 @@ const PROPORTION_SLIDERS: { key: keyof CharacterProfile['proportions']; label: s
   { key: 'hipWidth', label: 'Hip width', min: 0.6, max: 1.8, step: 0.05 },
 ];
 
+const LIGHT_KINDS: { kind: LightKind; label: string }[] = [
+  { kind: 'sun', label: 'Sun' },
+  { kind: 'spot', label: 'Spot' },
+  { kind: 'point', label: 'Lamp' },
+  { kind: 'ambient', label: 'Ambient' },
+];
+
 const BUILD_SLIDERS: { key: keyof CharacterProfile['build']; label: string; min: number; max: number; step: number }[] = [
   { key: 'weight', label: 'Weight (thin – heavy)', min: -1, max: 1, step: 0.05 },
   { key: 'muscle', label: 'Muscle', min: 0, max: 1, step: 0.05 },
@@ -40,12 +49,19 @@ const BUILD_SLIDERS: { key: keyof CharacterProfile['build']; label: string; min:
 // #region Main flow
 interface PanelProps {
   characters: SceneCharacter[];
+  lights: LightEntry[];
+  background: string;
   selected: SceneCharacter | null;
   selectedControl: string | null;
+  selectedLightId: string | null;
   onSelectCharacter: (id: string) => void;
   onSelectControl: (control: string | null) => void;
+  onSelectLight: (id: string | null) => void;
   onUpdateCharacter: (id: string, change: Partial<SceneCharacter>) => void;
-  onReplaceScene: (characters: SceneCharacter[]) => void;
+  onChangeLights: (update: (lights: LightEntry[]) => LightEntry[], key: string) => void;
+  onChangeBackground: (color: string) => void;
+  onExport: (request: ExportRequest) => void;
+  onReplaceScene: (scene: SceneState) => void;
   onAddCharacter: (profile: CharacterProfile) => void;
   onRemoveCharacter: (id: string) => void;
 }
@@ -91,7 +107,12 @@ export function Panel(props: PanelProps) {
       const data = JSON.parse(await file.text());
       if (data.format === 'poser.scene/1') {
         const scene = data as SceneFile;
-        props.onReplaceScene(scene.characters.map((entry) => ({ id: newCharacterId(), profile: normalizeProfile(entry.profile), pose: entry.pose ?? {} })));
+        props.onReplaceScene({
+          characters: scene.characters.map((entry) => ({ id: newCharacterId(), profile: normalizeProfile(entry.profile), pose: entry.pose ?? {} })),
+          // Scenes saved before lights existed get the default lights.
+          lights: (Array.isArray(scene.lights) ? scene.lights.filter((light) => typeof light === 'object' && light).map(normalizeLight) : DEFAULT_LIGHTS).map((light) => ({ ...light, id: newLightId() })),
+          background: /^#[0-9a-f]{6}$/i.test(scene.background ?? '') ? scene.background! : DEFAULT_BACKGROUND,
+        });
         setMessage(`Opened scene with ${scene.characters.length} characters`);
         return;
       }
@@ -117,7 +138,12 @@ export function Panel(props: PanelProps) {
   };
 
   const saveScene = () => {
-    const scene: SceneFile = { format: 'poser.scene/1', characters: characters.map(({ profile, pose }) => ({ profile, pose })) };
+    const scene: SceneFile = {
+      format: 'poser.scene/1',
+      characters: characters.map(({ profile, pose }) => ({ profile, pose })),
+      lights: props.lights.map(({ id: _id, ...light }) => light),
+      background: props.background,
+    };
     const link = document.createElement('a');
     link.href = URL.createObjectURL(new Blob([JSON.stringify(scene, null, 2)], { type: 'application/json' }));
     link.download = 'scene.scene.json';
@@ -171,6 +197,9 @@ export function Panel(props: PanelProps) {
             onSaveMyPoses={saveMyPoses}
           />
         )}
+
+        <LightsEditor {...props} />
+        <ImageExport onExport={props.onExport} />
       </div>
     </aside>
   );
@@ -386,6 +415,158 @@ function CharacterEditor({ selected, selectedControl, onSelectControl, onUpdateC
         )}
       </details>
     </>
+  );
+}
+
+function LightsEditor({ lights, background, selectedLightId, onSelectLight, onChangeLights, onChangeBackground }: PanelProps) {
+  const selectedLight = lights.find((light) => light.id === selectedLightId) ?? null;
+  const updateLight = (change: Partial<LightEntry>) => {
+    if (!selectedLight) return;
+    onChangeLights((list) => list.map((light) => (light.id === selectedLight.id ? { ...light, ...change } : light)), `light:${selectedLight.id}:${Object.keys(change).join()}`);
+  };
+  const placement = selectedLight ? placementOf(selectedLight) : null;
+  const place = (change: Partial<LightPlacement>) => updateLight({ position: positionFromPlacement(selectedLight!.target, { ...placement!, ...change }) });
+  const labelOf = (light: LightEntry) => LIGHT_KINDS.find((entry) => entry.kind === light.kind)!.label;
+
+  return (
+    <details>
+      <summary>Lights</summary>
+      <p className="hint">Presets replace all lights:</p>
+      <div className="row">
+        {LIGHT_PRESETS.map((preset) => (
+          <button
+            key={preset.name}
+            onClick={() => {
+              onChangeLights(() => preset.lights.map((light) => ({ ...light, id: newLightId() })), 'lights:preset');
+              onSelectLight(null);
+            }}
+          >
+            {preset.name}
+          </button>
+        ))}
+      </div>
+
+      <div className="chips">
+        {lights.map((light) => (
+          <button
+            key={light.id}
+            className={light.id === selectedLightId ? 'chip is-active' : 'chip'}
+            style={{ borderColor: light.color }}
+            onClick={() => onSelectLight(light.id === selectedLightId ? null : light.id)}
+          >
+            {labelOf(light)}
+          </button>
+        ))}
+      </div>
+      <div className="row">
+        {LIGHT_KINDS.map(({ kind, label }) => (
+          <button
+            key={kind}
+            onClick={() => {
+              const added = { ...newLight(kind), id: newLightId() };
+              onChangeLights((list) => [...list, added], 'lights:add');
+              onSelectLight(added.id);
+            }}
+          >
+            + {label}
+          </button>
+        ))}
+      </div>
+
+      {selectedLight && placement && (
+        <>
+          <label className="field">
+            Color
+            <input type="color" value={selectedLight.color} onChange={(event) => updateLight({ color: event.target.value })} />
+          </label>
+          {selectedLight.kind === 'ambient' && (
+            <label className="field">
+              Floor bounce color
+              <input type="color" value={selectedLight.groundColor ?? selectedLight.color} onChange={(event) => updateLight({ groundColor: event.target.value })} />
+            </label>
+          )}
+          <Slider label="Brightness" min={0} max={MAX_INTENSITY} step={0.05} value={selectedLight.intensity} onChange={(intensity) => updateLight({ intensity })} />
+          {selectedLight.kind !== 'ambient' && (
+            <>
+              <Slider label="Around" unit="°" min={-180} max={180} step={1} value={placement.aroundDegrees} onChange={(aroundDegrees) => place({ aroundDegrees })} />
+              <Slider label="Height" unit="°" min={-30} max={89} step={1} value={placement.heightDegrees} onChange={(heightDegrees) => place({ heightDegrees })} />
+              <Slider label="Distance" unit=" m" min={0.3} max={10} step={0.05} value={placement.distance} onChange={(distance) => place({ distance })} />
+              <Slider
+                label="Aim height"
+                unit=" m"
+                min={0}
+                max={2.5}
+                step={0.01}
+                value={selectedLight.target[1]}
+                onChange={(height) => {
+                  const target: LightEntry['target'] = [selectedLight.target[0], height, selectedLight.target[2]];
+                  updateLight({ target, position: positionFromPlacement(target, placement) });
+                }}
+              />
+            </>
+          )}
+          {selectedLight.kind === 'spot' && (
+            <>
+              <Slider label="Cone" unit="°" min={5} max={80} step={1} value={selectedLight.coneDegrees ?? 35} onChange={(coneDegrees) => updateLight({ coneDegrees })} />
+              <Slider label="Soft edge" min={0} max={1} step={0.05} value={selectedLight.softness ?? 0.4} onChange={(softness) => updateLight({ softness })} />
+            </>
+          )}
+          <div className="row">
+            {selectedLight.kind !== 'ambient' && (
+              <button className={selectedLight.castShadow ? 'is-active' : ''} onClick={() => updateLight({ castShadow: !selectedLight.castShadow })}>
+                Shadows {selectedLight.castShadow ? 'on' : 'off'}
+              </button>
+            )}
+            <button
+              className="danger"
+              onClick={() => {
+                onChangeLights((list) => list.filter((light) => light.id !== selectedLight.id), 'lights:remove');
+                onSelectLight(null);
+              }}
+            >
+              Remove light
+            </button>
+          </div>
+        </>
+      )}
+
+      <label className="field">
+        Background
+        <input type="color" value={background} onChange={(event) => onChangeBackground(event.target.value)} />
+      </label>
+    </details>
+  );
+}
+
+function ImageExport({ onExport }: { onExport: (request: ExportRequest) => void }) {
+  const [scale, setScale] = useState(2);
+  const [isTransparent, setIsTransparent] = useState(false);
+  const [isShowingGuides, setIsShowingGuides] = useState(false);
+
+  return (
+    <details>
+      <summary>Save image</summary>
+      <p className="hint">Saves what the stage shows now, without the light markers and the selection color.</p>
+      <label className="field">
+        Size
+        <select value={scale} onChange={(event) => setScale(Number(event.target.value))}>
+          <option value={1}>Screen size</option>
+          <option value={2}>2× sharper</option>
+          <option value={4}>4× sharper (big file)</option>
+        </select>
+      </label>
+      <label className="check">
+        <input type="checkbox" checked={isTransparent} onChange={(event) => setIsTransparent(event.target.checked)} />
+        Transparent background (keeps the floor shadows)
+      </label>
+      <label className="check">
+        <input type="checkbox" checked={isShowingGuides} onChange={(event) => setIsShowingGuides(event.target.checked)} />
+        Include floor grid and height ruler
+      </label>
+      <div className="row">
+        <button onClick={() => onExport({ scale, isTransparent, isShowingGuides })}>Save PNG</button>
+      </div>
+    </details>
   );
 }
 // #endregion

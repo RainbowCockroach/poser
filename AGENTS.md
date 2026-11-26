@@ -33,12 +33,24 @@ Multipliers are relative to a realistic adult (1 = average). `weight` is −1 (t
     { "profile": { "...": "a character file, inline" },
       "pose": { "position": [0, 0, 0],
                 "joints": { "pelvis": { "turn": 90 }, "elbow_l": { "flexion": 90 }, "knee_r": { "flexion": 45 } } } }
-  ]
+  ],
+  "lights": [
+    { "kind": "ambient", "color": "#ffffff", "groundColor": "#b9a99a", "intensity": 1.2, "position": [0, 5, 0], "target": [0, 1, 0], "castShadow": false },
+    { "kind": "spot", "color": "#fff4e5", "intensity": 3, "position": [2.2, 3, 2.8], "target": [0, 1, 0], "castShadow": true,
+      "coneDegrees": 35, "softness": 0.5 }
+  ],
+  "background": "#eef0f5"
 }
 ```
 
 `position` moves the whole character (x/z on the floor, y up). Angles are degrees and are clamped to
 the real human range, so asking for more than a body can do just stops at the limit.
+
+Lights: `kind` is `sun`, `spot`, `point` (a lamp) or `ambient`. Each shines from `position` toward `target`.
+`intensity` (0–10) is the brightness at the target for every kind, so moving a lamp away doesn't dim the
+character. `coneDegrees` (5–80, half the cone) and `softness` (0–1) are spot only; `groundColor` is ambient
+only. `lights` and `background` are optional; leaving them out gives the default soft daylight. Presets
+are `LIGHT_PRESETS` in `src/core/lights.ts`.
 
 ## Pose file (`poses/*.pose.json`)
 

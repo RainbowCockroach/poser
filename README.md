@@ -2,7 +2,7 @@
 
 3D posing app for drawing reference, built for a cast of original characters with very different
 bodies. Segmented art mannequins with anatomical joints and real range-of-motion limits.
-Runs in the browser on desktop and phones.
+Runs in the browser on desktop and phones: https://rainbowcockroach.github.io/poser/
 
 ```sh
 npm install
@@ -16,4 +16,7 @@ npm run build   # static site in dist/, ready for GitHub Pages
 - Posing: drag a body part to bend it; drag a hand or foot to move the whole limb; drag the hips to move
   the character ("Pin feet" keeps the feet planted). Undo with Ctrl/Cmd+Z.
 - Poses: presets in `poses/*.pose.json`, plus "My poses" saved in the browser and shareable as `.pose.json`.
+- Lights: presets or your own sun, spot, lamp and ambient lights with shadows; saved in the scene.
+- Save image: PNG of the current view, up to 4× sharper, optionally with a transparent background.
+- Deploy: pushing to `main` tests, builds and publishes to GitHub Pages (`.github/workflows/pages.yml`).
 - Spec and roadmap: `docs/SPEC.md`. For AI agents: `AGENTS.md`.

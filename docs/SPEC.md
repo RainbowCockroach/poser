@@ -49,9 +49,11 @@ values, see sources). Coupled motion:
 2. ✅ Direct posing: drag any body part (hands and feet pull the whole limb), move the hips with or without
    pinned feet, undo/redo, mirror and flip, pose library (presets + My poses + `.pose.json` files), drop to floor.
    Twists (head turn, forearm roll, …) stay on sliders.
-3. Lights: point/spot/sun/ambient with color, intensity, shadows; presets. PNG export.
+3. ✅ Lights: sun/spot/lamp/ambient with color, brightness, shadows, placed by angle around the target; 6 presets;
+   saved in the scene file and undoable. PNG export of the current view (up to 4096 px, optional transparent
+   background, helpers hidden). GitHub Pages deploy from `main`.
 4. Contact solver (hand on knee, chest on back) + body collision; CLI (`poser render`) and MCP server for agents.
-5. Share links (character compressed into the URL), GitHub Pages deploy, mobile polish.
+5. Share links (character compressed into the URL), mobile polish.
 
 ## Sources
 

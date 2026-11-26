@@ -1,7 +1,8 @@
 /*
  * Poser app shell: the 3D stage on the left (or top on phones) and the edit panel.
- * Scene state lives here: the characters, each with a profile (body) and a pose, plus undo history.
+ * Scene state lives here: the characters (each a profile and a pose), the lights, the background, plus undo history.
  * Scenes and characters are saved as JSON files ("poser.scene/1", "poser.character/1") to share.
+ * "Save PNG" re-renders the current view without the editing helpers (grid, ruler, light markers).
  * Run: npm run dev
  */
 
@@ -9,11 +10,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { Grid, Html, OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei';
-import { SRGBColorSpace, TextureLoader, type Texture } from 'three';
+import { SRGBColorSpace, TextureLoader, Vector2, type Texture } from 'three';
 import { Mannequin } from './Mannequin';
 import { Panel } from './Panel';
+import { SceneLights } from './SceneLights';
 import { normalizeProfile, type CharacterProfile } from '../core/rig';
 import { CONTROL_FOR_BONE, CONTROLS, type Pose } from '../core/pose';
+import { DEFAULT_LIGHTS, type SceneLight } from '../core/lights';
 import { useDragPosing } from './useDragPosing';
 // #endregion
 
@@ -25,53 +28,82 @@ export interface SceneCharacter {
   reference?: { url: string; opacity: number };
 }
 
+export interface LightEntry extends SceneLight {
+  id: string;
+}
+
+export interface SceneState {
+  characters: SceneCharacter[];
+  lights: LightEntry[];
+  background: string;
+}
+
 export interface SceneFile {
   format: 'poser.scene/1';
   characters: { profile: CharacterProfile; pose: Pose }[];
+  lights?: SceneLight[];
+  background?: string;
+}
+
+export interface ExportRequest {
+  scale: number;
+  isTransparent: boolean;
+  isShowingGuides: boolean;
 }
 
 const SAMPLE_PROFILES = Object.values(
   import.meta.glob('../../characters/*.oc.json', { eager: true, import: 'default' }),
 ) as CharacterProfile[];
 
+export const DEFAULT_BACKGROUND = '#eef0f5';
 const CHARACTER_SPACING = 0.9;
 const RULER_HEIGHT_METERS = 2.5;
 const UNDO_STEPS = 100;
 // Changes with the same key closer together than this are one undo step (one slider drag).
 const SAME_GESTURE_MILLISECONDS = 800;
+// Big renders can fail on phones; the long side of a PNG stays under this.
+const MAX_EXPORT_PIXELS = 4096;
 // #endregion
 
 // #region Main flow
 export function App() {
   const [scene, setScene] = useState(() => ({
-    characters: [...SAMPLE_PROFILES]
-      .sort((a, b) => b.heightCm - a.heightCm)
-      .map((profile, index, all): SceneCharacter => ({
-        id: newCharacterId(),
-        profile: normalizeProfile(profile),
-        pose: { position: [(index - (all.length - 1) / 2) * CHARACTER_SPACING, 0, 0] },
-      })),
-    past: [] as SceneCharacter[][],
-    future: [] as SceneCharacter[][],
+    present: {
+      characters: [...SAMPLE_PROFILES]
+        .sort((a, b) => b.heightCm - a.heightCm)
+        .map((profile, index, all): SceneCharacter => ({
+          id: newCharacterId(),
+          profile: normalizeProfile(profile),
+          pose: { position: [(index - (all.length - 1) / 2) * CHARACTER_SPACING, 0, 0] },
+        })),
+      lights: DEFAULT_LIGHTS.map((light) => ({ ...light, id: newLightId() })),
+      background: DEFAULT_BACKGROUND,
+    } as SceneState,
+    past: [] as SceneState[],
+    future: [] as SceneState[],
   }));
-  const characters = scene.characters;
+  const { characters, lights, background } = scene.present;
   const lastChange = useRef({ key: '', time: 0 });
   const [selectedId, setSelectedId] = useState<string | null>(() => characters[0]?.id ?? null);
   const [selectedControl, setSelectedControl] = useState<string | null>(null);
+  const [selectedLightId, setSelectedLightId] = useState<string | null>(null);
   const [isFrontView, setIsFrontView] = useState(false);
   const [isPinFeet, setIsPinFeet] = useState(false);
+  const [exportRequest, setExportRequest] = useState<ExportRequest | null>(null);
 
-  const changeCharacters = (update: (list: SceneCharacter[]) => SceneCharacter[], key: string) => {
+  const changeScene = (update: (state: SceneState) => SceneState, key: string) => {
     const now = performance.now();
     // A body drag has its own key, so holding still mid-drag doesn't split it into two undo steps.
     const isSameGesture = key === lastChange.current.key && (key.startsWith('drag:') || now - lastChange.current.time < SAME_GESTURE_MILLISECONDS);
     lastChange.current = { key, time: now };
     setScene((current) => ({
-      characters: update(current.characters),
-      past: isSameGesture ? current.past : [...current.past.slice(-UNDO_STEPS), current.characters],
+      present: update(current.present),
+      past: isSameGesture ? current.past : [...current.past.slice(-UNDO_STEPS), current.present],
       future: [],
     }));
   };
+  const changeCharacters = (update: (list: SceneCharacter[]) => SceneCharacter[], key: string) =>
+    changeScene((state) => ({ ...state, characters: update(state.characters) }), key);
 
   // Reference images are local blob URLs, not part of the scene, so undo keeps whatever image is showing now.
   const travel = (direction: 'undo' | 'redo') => {
@@ -80,9 +112,12 @@ export function App() {
       const source = direction === 'undo' ? current.past : current.future;
       if (source.length === 0) return current;
       const target = direction === 'undo' ? source[source.length - 1] : source[0];
-      const restored = target.map((character) => ({ ...character, reference: current.characters.find((now) => now.id === character.id)?.reference }));
-      if (direction === 'undo') return { characters: restored, past: current.past.slice(0, -1), future: [current.characters, ...current.future] };
-      return { characters: restored, past: [...current.past, current.characters], future: current.future.slice(1) };
+      const restored: SceneState = {
+        ...target,
+        characters: target.characters.map((character) => ({ ...character, reference: current.present.characters.find((now) => now.id === character.id)?.reference })),
+      };
+      if (direction === 'undo') return { present: restored, past: current.past.slice(0, -1), future: [current.present, ...current.future] };
+      return { present: restored, past: [...current.past, current.present], future: current.future.slice(1) };
     });
   };
 
@@ -113,10 +148,15 @@ export function App() {
         <Canvas shadows dpr={[1, 2]} onPointerMissed={() => setSelectedControl(null)}>
           <Stage
             characters={characters}
+            lights={lights}
+            background={background}
             selected={selected}
+            selectedLightId={selectedLightId}
             highlightedBones={highlightedBones}
             isFrontView={isFrontView}
             isPinFeet={isPinFeet}
+            exportRequest={exportRequest}
+            onExported={() => setExportRequest(null)}
             onSelect={(id, control) => {
               setSelectedId(id);
               setSelectedControl(control);
@@ -139,8 +179,15 @@ export function App() {
       </div>
       <Panel
         characters={characters}
+        lights={lights}
+        background={background}
         selected={selected}
         selectedControl={selectedControl}
+        selectedLightId={selectedLightId}
+        onSelectLight={setSelectedLightId}
+        onChangeLights={(update, key) => changeScene((state) => ({ ...state, lights: update(state.lights) }), key)}
+        onChangeBackground={(color) => changeScene((state) => ({ ...state, background: color }), 'background')}
+        onExport={setExportRequest}
         onSelectCharacter={(id) => {
           setSelectedId(id);
           setSelectedControl(null);
@@ -148,9 +195,10 @@ export function App() {
         onSelectControl={setSelectedControl}
         onUpdateCharacter={updateCharacter}
         onReplaceScene={(next) => {
-          changeCharacters(() => next, 'replace');
-          setSelectedId(next[0]?.id ?? null);
+          changeScene(() => next, 'replace');
+          setSelectedId(next.characters[0]?.id ?? null);
           setSelectedControl(null);
+          setSelectedLightId(null);
         }}
         onAddCharacter={(profile) => {
           const rightmost = Math.max(-CHARACTER_SPACING, ...characters.map((character) => character.pose.position?.[0] ?? 0));
@@ -171,17 +219,50 @@ export function App() {
 
 interface StageProps {
   characters: SceneCharacter[];
+  lights: LightEntry[];
+  background: string;
   selected: SceneCharacter | null;
+  selectedLightId: string | null;
   highlightedBones: string[];
   isFrontView: boolean;
   isPinFeet: boolean;
+  exportRequest: ExportRequest | null;
+  onExported: () => void;
   onSelect: (id: string, control: string | null) => void;
   onPose: (id: string, pose: Pose, gestureKey: string) => void;
 }
 
-function Stage({ characters, selected, highlightedBones, isFrontView, isPinFeet, onSelect, onPose }: StageProps) {
+function Stage(props: StageProps) {
+  const { characters, lights, background, selected, highlightedBones, isFrontView, isPinFeet, exportRequest, onSelect, onPose } = props;
   const viewportHeight = useThree((state) => state.size.height);
+  const renderer = useThree((state) => state.gl);
+  const threeScene = useThree((state) => state.scene);
+  const camera = useThree((state) => state.camera);
   const startDrag = useDragPosing(isPinFeet, onPose);
+  const isExporting = exportRequest !== null;
+  const isShowingGuides = !isExporting || exportRequest.isShowingGuides;
+
+  // Runs after React has hidden the helpers, renders one sharper frame by hand and saves it.
+  useEffect(() => {
+    if (!exportRequest) return;
+    const size = renderer.getSize(new Vector2());
+    const screenPixelRatio = renderer.getPixelRatio();
+    const pixelRatio = Math.min(exportRequest.scale, MAX_EXPORT_PIXELS / Math.max(size.x, size.y));
+    const savedBackground = threeScene.background;
+    if (exportRequest.isTransparent) threeScene.background = null;
+    renderer.setPixelRatio(pixelRatio);
+    renderer.render(threeScene, camera);
+    const url = renderer.domElement.toDataURL('image/png');
+    threeScene.background = savedBackground;
+    renderer.setPixelRatio(screenPixelRatio);
+    console.log(`Saved PNG ${Math.round(size.x * pixelRatio)}×${Math.round(size.y * pixelRatio)}`);
+
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'poser.png';
+    link.click();
+    props.onExported();
+  }, [exportRequest]);
   const leftmost = Math.min(0, ...characters.map((character) => character.pose.position?.[0] ?? 0));
   const focusX = selected?.pose.position?.[0] ?? 0;
   const focusHeight = selected ? selected.profile.heightCm / 100 : 1.7;
@@ -191,7 +272,7 @@ function Stage({ characters, selected, highlightedBones, isFrontView, isPinFeet,
 
   return (
     <>
-      <color attach="background" args={['#eef0f5']} />
+      <color attach="background" args={[background]} />
       {isFrontView ? (
         <OrthographicCamera makeDefault position={[focusX, focusHeight / 2, 10]} zoom={viewportHeight / (focusHeight * 1.25)} />
       ) : (
@@ -199,16 +280,15 @@ function Stage({ characters, selected, highlightedBones, isFrontView, isPinFeet,
       )}
       <OrbitControls key={isFrontView ? `front-${focusX}` : 'free'} target={[isFrontView ? focusX : 0, isFrontView ? focusHeight / 2 : 1, 0]} enableRotate={!isFrontView} makeDefault />
 
-      <hemisphereLight args={['#ffffff', '#b9a99a', 1.2]} />
-      <directionalLight position={[3, 6, 4]} intensity={2} castShadow shadow-mapSize={[2048, 2048]} shadow-camera-left={-5} shadow-camera-right={5} shadow-camera-top={5} shadow-camera-bottom={-5} />
+      <SceneLights lights={lights} selectedLightId={props.selectedLightId} isShowingMarkers={!isExporting} />
 
       <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[40, 40]} />
         <shadowMaterial opacity={0.18} />
       </mesh>
-      <Grid infiniteGrid cellSize={0.1} sectionSize={1} cellColor="#c9ccd6" sectionColor="#9aa0b3" fadeDistance={25} position={[0, 0.001, 0]} />
+      <Grid visible={isShowingGuides} infiniteGrid cellSize={0.1} sectionSize={1} cellColor="#c9ccd6" sectionColor="#9aa0b3" fadeDistance={25} position={[0, 0.001, 0]} />
 
-      <group position={[leftmost - 0.7, 0, -0.3]}>
+      <group visible={isShowingGuides} position={[leftmost - 0.7, 0, -0.3]}>
         <mesh position={[0, RULER_HEIGHT_METERS / 2, 0]}>
           <boxGeometry args={[0.008, RULER_HEIGHT_METERS, 0.008]} />
           <meshBasicMaterial color="#6b7085" />
@@ -231,13 +311,13 @@ function Stage({ characters, selected, highlightedBones, isFrontView, isPinFeet,
           <Mannequin
             profile={character.profile}
             pose={character.pose}
-            highlightedBones={character.id === selected?.id ? highlightedBones : []}
+            highlightedBones={character.id === selected?.id && !isExporting ? highlightedBones : []}
             onGrab={(grab) => {
               onSelect(character.id, CONTROL_FOR_BONE[grab.bone] ?? null);
               startDrag(character, grab);
             }}
           />
-          {character.reference && <ReferenceImage character={character} />}
+          {character.reference && <ReferenceImage character={character} isVisible={!isExporting} />}
           {character.id === selected?.id && (
             <Html position={[character.pose.position?.[0] ?? 0, character.profile.heightCm / 100 + 0.12, character.pose.position?.[2] ?? 0]} center className="name-label" zIndexRange={[1, 0]}>
               {character.profile.name} · {character.profile.heightCm} cm
@@ -250,13 +330,18 @@ function Stage({ characters, selected, highlightedBones, isFrontView, isPinFeet,
 }
 
 // crypto.randomUUID only exists on https/localhost; a phone opening the dev server over Wi-Fi uses plain http.
-let characterCounter = 0;
+let idCounter = 0;
 export function newCharacterId() {
-  characterCounter += 1;
-  return `character-${characterCounter}`;
+  idCounter += 1;
+  return `character-${idCounter}`;
 }
 
-function ReferenceImage({ character }: { character: SceneCharacter }) {
+export function newLightId() {
+  idCounter += 1;
+  return `light-${idCounter}`;
+}
+
+function ReferenceImage({ character, isVisible }: { character: SceneCharacter; isVisible: boolean }) {
   const [texture, setTexture] = useState<Texture | null>(null);
   const url = character.reference!.url;
 
@@ -273,7 +358,7 @@ function ReferenceImage({ character }: { character: SceneCharacter }) {
   const [x, , z] = character.pose.position ?? [0, 0, 0];
 
   return (
-    <mesh position={[x, height / 2, z - 0.4]} renderOrder={-1}>
+    <mesh visible={isVisible} position={[x, height / 2, z - 0.4]} renderOrder={-1}>
       <planeGeometry args={[width, height]} />
       <meshBasicMaterial map={texture} transparent opacity={character.reference!.opacity} depthWrite={false} />
     </mesh>
