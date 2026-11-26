@@ -1,17 +1,23 @@
 /*
- * Edit panel: pick a character, pose its joints with anatomical sliders, shape its body,
- * place it in the scene, and open/save scene and character files for sharing.
+ * Edit panel: pick a character, pose its joints with anatomical sliders, mirror poses, apply poses
+ * from the library, shape its body, place it, and open/save scene, character and pose files for sharing.
  * Joint sliders only allow the range a real body can do (limits live in core/pose.ts).
+ * "My poses" are kept in this browser (localStorage); download a pose to share it.
  */
 
 // #region Setup
 import { useState, type ChangeEvent } from 'react';
-import { CONTROLS } from '../core/pose';
-import { DEFAULT_PROFILE, normalizeProfile, type CharacterProfile } from '../core/rig';
+import { CONTROLS, mirrorPose, type Pose, type PoseFile } from '../core/pose';
+import { dropToFloor } from '../core/reach';
+import { buildRig, DEFAULT_PROFILE, normalizeProfile, type CharacterProfile } from '../core/rig';
 import { newCharacterId, type SceneCharacter, type SceneFile } from './App';
 // #endregion
 
 // #region Config
+const PRESET_POSES = (Object.values(import.meta.glob('../../poses/*.pose.json', { eager: true, import: 'default' })) as PoseFile[]).sort((a, b) =>
+  a.name.localeCompare(b.name),
+);
+const MY_POSES_STORAGE_KEY = 'poser.myPoses';
 const PROPORTION_SLIDERS: { key: keyof CharacterProfile['proportions']; label: string; min: number; max: number; step: number }[] = [
   { key: 'headsTall', label: 'Heads tall', min: 2, max: 9, step: 0.1 },
   { key: 'neckLength', label: 'Neck length', min: 0.3, max: 2, step: 0.05 },
@@ -48,6 +54,34 @@ export function Panel(props: PanelProps) {
   const { characters, selected, selectedControl } = props;
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [message, setMessage] = useState('');
+  const [myPoses, setMyPoses] = useState<PoseFile[]>(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(MY_POSES_STORAGE_KEY) ?? '[]');
+      return Array.isArray(stored) ? stored : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const saveMyPoses = (poses: PoseFile[]) => {
+    setMyPoses(poses);
+    try {
+      localStorage.setItem(MY_POSES_STORAGE_KEY, JSON.stringify(poses));
+    } catch {
+      setMessage('This browser would not keep the pose; use "Download pose" instead');
+    }
+  };
+
+  // A library pose replaces the joint angles but keeps where the character stands and which way it faces.
+  const applyPose = (file: PoseFile) => {
+    if (!selected) return;
+    const turn = selected.pose.joints?.pelvis?.turn;
+    const joints = structuredClone(file.joints);
+    if (turn) joints.pelvis = { ...joints.pelvis, turn };
+    const pose: Pose = dropToFloor(buildRig(selected.profile), { ...selected.pose, joints });
+    props.onUpdateCharacter(selected.id, { pose });
+    setMessage(`${selected.profile.name}: ${file.name}`);
+  };
 
   const openFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -66,7 +100,17 @@ export function Panel(props: PanelProps) {
         setMessage(`Added ${data.name}`);
         return;
       }
-      setMessage('That file is not a Poser scene or character');
+      if (data.format === 'poser.pose/1') {
+        const pose = data as PoseFile;
+        saveMyPoses([...myPoses.filter((entry) => entry.name !== pose.name), pose]);
+        if (!selected) {
+          setMessage(`Added pose ${pose.name} to My poses`);
+          return;
+        }
+        applyPose(pose);
+        return;
+      }
+      setMessage('That file is not a Poser scene, character or pose');
     } catch (error) {
       setMessage(`Could not read ${file.name}: ${(error as Error).message}`);
     }
@@ -117,14 +161,31 @@ export function Panel(props: PanelProps) {
           </div>
         </section>
 
-        {selected && <CharacterEditor {...props} selected={selected} selectedControl={selectedControl} />}
+        {selected && (
+          <CharacterEditor
+            {...props}
+            selected={selected}
+            selectedControl={selectedControl}
+            myPoses={myPoses}
+            onApplyPose={applyPose}
+            onSaveMyPoses={saveMyPoses}
+          />
+        )}
       </div>
     </aside>
   );
 }
 
-function CharacterEditor({ selected, selectedControl, onSelectControl, onUpdateCharacter, onRemoveCharacter }: PanelProps & { selected: SceneCharacter }) {
+interface CharacterEditorProps extends PanelProps {
+  selected: SceneCharacter;
+  myPoses: PoseFile[];
+  onApplyPose: (file: PoseFile) => void;
+  onSaveMyPoses: (poses: PoseFile[]) => void;
+}
+
+function CharacterEditor({ selected, selectedControl, onSelectControl, onUpdateCharacter, onRemoveCharacter, myPoses, onApplyPose, onSaveMyPoses }: CharacterEditorProps) {
   const { profile, pose } = selected;
+  const [poseName, setPoseName] = useState('');
   const position = pose.position ?? [0, 0, 0];
   const joints = pose.joints ?? {};
   const control = selectedControl ? CONTROLS[selectedControl] : null;
@@ -142,6 +203,22 @@ function CharacterEditor({ selected, selectedControl, onSelectControl, onUpdateC
     URL.revokeObjectURL(link.href);
   };
 
+  // The heading is where the character faces in the scene, not part of the pose itself.
+  const currentPoseFile = (name: string): PoseFile => {
+    const { pelvis, ...rest } = structuredClone(joints);
+    const { turn: _heading, ...pelvisTilt } = pelvis ?? {};
+    return { format: 'poser.pose/1', name, joints: Object.keys(pelvisTilt).length > 0 ? { ...rest, pelvis: pelvisTilt } : rest };
+  };
+
+  const downloadPose = () => {
+    const file = currentPoseFile(poseName.trim() || `${profile.name} pose`);
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' }));
+    link.download = `${file.name.toLowerCase().replace(/\s+/g, '-')}.pose.json`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+
   const pickReference = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -153,7 +230,7 @@ function CharacterEditor({ selected, selectedControl, onSelectControl, onUpdateC
     <>
       <details open>
         <summary>Pose</summary>
-        <p className="hint">Tap a body part, or pick a joint:</p>
+        <p className="hint">Drag a body part to bend it. Drag a hand or foot and the whole limb follows. Drag the hips to move the character. Or pick a joint:</p>
         <select value={selectedControl ?? ''} onChange={(event) => onSelectControl(event.target.value || null)}>
           <option value="">— choose a joint —</option>
           {Object.entries(CONTROLS).map(([name, entry]) => (
@@ -187,7 +264,57 @@ function CharacterEditor({ selected, selectedControl, onSelectControl, onUpdateC
               Reset joint
             </button>
           )}
-          <button onClick={() => setPose({ joints: {} })}>Reset pose</button>
+          <button onClick={() => setPose({ joints: joints.pelvis?.turn ? { pelvis: { turn: joints.pelvis.turn } } : {} })}>Reset pose</button>
+        </div>
+        <div className="row">
+          <button onClick={() => setPose(mirrorPose(pose, 'left-to-right'))} title="Copy the left arm and leg onto the right">
+            Mirror L → R
+          </button>
+          <button onClick={() => setPose(mirrorPose(pose, 'right-to-left'))} title="Copy the right arm and leg onto the left">
+            Mirror R → L
+          </button>
+          <button onClick={() => setPose(mirrorPose(pose, 'flip'))} title="Swap left and right">
+            Flip
+          </button>
+        </div>
+      </details>
+
+      <details>
+        <summary>Pose library</summary>
+        <div className="row">
+          {PRESET_POSES.map((file) => (
+            <button key={file.name} onClick={() => onApplyPose(file)}>
+              {file.name}
+            </button>
+          ))}
+        </div>
+        <p className="hint">My poses (kept in this browser):</p>
+        {myPoses.length === 0 && <p className="hint">None yet.</p>}
+        <div className="row">
+          {myPoses.map((file) => (
+            <span key={file.name} className="pose-chip">
+              <button onClick={() => onApplyPose(file)}>{file.name}</button>
+              <button className="danger" title={`Forget ${file.name}`} onClick={() => onSaveMyPoses(myPoses.filter((entry) => entry.name !== file.name))}>
+                ✕
+              </button>
+            </span>
+          ))}
+        </div>
+        <label className="field">
+          Pose name
+          <input value={poseName} placeholder={`${profile.name} pose`} onChange={(event) => setPoseName(event.target.value)} />
+        </label>
+        <div className="row">
+          <button
+            onClick={() => {
+              const file = currentPoseFile(poseName.trim() || `${profile.name} pose`);
+              onSaveMyPoses([...myPoses.filter((entry) => entry.name !== file.name), file]);
+              setPoseName('');
+            }}
+          >
+            Save to My poses
+          </button>
+          <button onClick={downloadPose}>Download pose</button>
         </div>
       </details>
 
@@ -197,6 +324,11 @@ function CharacterEditor({ selected, selectedControl, onSelectControl, onUpdateC
         <Slider label="back / front" unit=" m" min={-5} max={5} step={0.01} value={position[2]} onChange={(z) => setPose({ position: [position[0], position[1], z] })} />
         <Slider label="up / down" unit=" m" min={-1.5} max={2} step={0.01} value={position[1]} onChange={(y) => setPose({ position: [position[0], y, position[2]] })} />
         <Slider label="turn" unit="°" min={-180} max={180} step={1} value={joints.pelvis?.turn ?? 0} onChange={(degrees) => setMotion('pelvis', 'turn', degrees)} />
+        <div className="row">
+          <button onClick={() => setPose(dropToFloor(buildRig(profile), pose))} title="Move up or down until the lowest body part touches the floor">
+            Drop to floor
+          </button>
+        </div>
       </details>
 
       <details>

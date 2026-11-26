@@ -1,0 +1,1 @@
+{ "format": "poser.pose/1", "name": "Sit on a chair", "joints": { "hip_l": { "flexion": 90, "abduction": 5 }, "hip_r": { "flexion": 90, "abduction": 5 }, "knee_l": { "flexion": 90 }, "knee_r": { "flexion": 90 }, "thoracic": { "flexion": 5 }, "shoulder_l": { "flexion": 25 }, "shoulder_r": { "flexion": 25 }, "elbow_l": { "flexion": 50 }, "elbow_r": { "flexion": 50 } } }

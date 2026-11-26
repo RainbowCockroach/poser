@@ -1,0 +1,1 @@
+{ "format": "poser.pose/1", "name": "A-pose", "joints": { "shoulder_l": { "abduction": 45 }, "shoulder_r": { "abduction": 45 } } }

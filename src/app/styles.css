@@ -127,6 +127,30 @@ button:hover,
   border-color: var(--accent);
 }
 
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button.is-active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.pose-chip {
+  display: inline-flex;
+}
+
+.pose-chip button:first-child {
+  border-radius: 8px 0 0 8px;
+}
+
+.pose-chip button:last-child {
+  border-left: none;
+  border-radius: 0 8px 8px 0;
+  padding: 7px 9px;
+}
+
 .danger {
   color: var(--danger);
 }
@@ -220,10 +244,19 @@ select,
 /* #endregion */
 
 /* #region Stage overlays */
-.view-toggle {
+.stage-tools {
   position: absolute;
   top: 12px;
   left: 12px;
+  right: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.stage-tools button {
+  pointer-events: auto;
 }
 
 .ruler-label {

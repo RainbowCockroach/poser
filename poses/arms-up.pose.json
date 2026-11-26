@@ -1,0 +1,1 @@
+{ "format": "poser.pose/1", "name": "Arms up", "joints": { "shoulder_l": { "flexion": 170, "abduction": 15 }, "shoulder_r": { "flexion": 170, "abduction": 15 }, "elbow_l": { "flexion": 10 }, "elbow_r": { "flexion": 10 }, "neck": { "flexion": -15 } } }

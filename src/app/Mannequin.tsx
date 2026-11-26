@@ -1,7 +1,7 @@
 /*
  * Draws one character as a segmented art mannequin: rounded segments with ball joints.
  * The bone tree comes from buildRig(profile); the pose is applied with solvePose(pose).
- * Clicking a segment reports its bone so the panel can show that joint's controls.
+ * Pressing a segment reports the bone and the exact point grabbed, for selecting and drag posing.
  */
 
 // #region Setup
@@ -10,6 +10,7 @@ import { Color, Group, LatheGeometry, Matrix4, Mesh, MeshStandardMaterial, Quate
 import type { ThreeEvent } from '@react-three/fiber';
 import { buildRig, type CharacterProfile, type Shape } from '../core/rig';
 import { restRotation, solvePose, type Pose } from '../core/pose';
+import type { Grab } from './useDragPosing';
 // #endregion
 
 // #region Main flow
@@ -17,10 +18,10 @@ interface MannequinProps {
   profile: CharacterProfile;
   pose: Pose;
   highlightedBones: string[];
-  onSelectBone: (bone: string) => void;
+  onGrab: (grab: Grab) => void;
 }
 
-export function Mannequin({ profile, pose, highlightedBones, onSelectBone }: MannequinProps) {
+export function Mannequin({ profile, pose, highlightedBones, onGrab }: MannequinProps) {
   const rig = useMemo(() => buildRig(profile), [profile]);
 
   const materials = useMemo(() => {
@@ -78,7 +79,17 @@ export function Mannequin({ profile, pose, highlightedBones, onSelectBone }: Man
 
   const handlePointerDown = (event: ThreeEvent<PointerEvent>) => {
     event.stopPropagation();
-    onSelectBone(event.object.userData.bone);
+    // Right and middle buttons stay with the camera (pan).
+    if (event.nativeEvent.button !== 0) return;
+    const boneGroup = event.object.parent!;
+    onGrab({
+      bone: event.object.userData.bone,
+      localPoint: boneGroup.worldToLocal(event.point.clone()).toArray(),
+      worldPoint: event.point.clone(),
+      pointerId: event.pointerId,
+      clientX: event.nativeEvent.clientX,
+      clientY: event.nativeEvent.clientY,
+    });
   };
 
   return <primitive object={model.root} onPointerDown={handlePointerDown} />;

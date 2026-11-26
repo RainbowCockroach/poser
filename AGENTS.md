@@ -40,6 +40,16 @@ Multipliers are relative to a realistic adult (1 = average). `weight` is −1 (t
 `position` moves the whole character (x/z on the floor, y up). Angles are degrees and are clamped to
 the real human range, so asking for more than a body can do just stops at the limit.
 
+## Pose file (`poses/*.pose.json`)
+
+```json
+{ "format": "poser.pose/1", "name": "Walk", "joints": { "hip_l": { "flexion": 25 }, "knee_r": { "flexion": 25 } } }
+```
+
+Just the joint angles, no position or heading. The presets in `poses/` are good starting points: copy their
+`joints` into a scene character and adjust. In the app, applying a pose keeps the character's place and
+heading, then drops it to the floor.
+
 ## Joints
 
 The full list with limits is `LEFT_AND_MIDLINE_CONTROLS` in `src/core/pose.ts`; every `_l` control has an `_r` twin
@@ -63,4 +73,5 @@ with the same meaning (abduction is always "away from the body").
 
 Tips: flexion and abduction on the same ball joint blend (90 + 90 = horizontal, diagonal). Raising an
 arm lifts the shoulder by itself, so don't add `elevation` for that. A character that sits or kneels
-needs `position[1]` lowered, because nothing pins the feet to the ground yet.
+needs `position[1]` lowered; in the app "Drop to floor" (Place) does it. Code that runs the core library
+can call `dropToFloor(rig, pose)` and `reach(rig, pose, goals, motions)` from `src/core/reach.ts`.

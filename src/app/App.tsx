@@ -1,12 +1,12 @@
 /*
  * Poser app shell: the 3D stage on the left (or top on phones) and the edit panel.
- * Scene state lives here: the characters, each with a profile (body) and a pose.
+ * Scene state lives here: the characters, each with a profile (body) and a pose, plus undo history.
  * Scenes and characters are saved as JSON files ("poser.scene/1", "poser.character/1") to share.
  * Run: npm run dev
  */
 
 // #region Setup
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { Grid, Html, OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei';
 import { SRGBColorSpace, TextureLoader, type Texture } from 'three';
@@ -14,6 +14,7 @@ import { Mannequin } from './Mannequin';
 import { Panel } from './Panel';
 import { normalizeProfile, type CharacterProfile } from '../core/rig';
 import { CONTROL_FOR_BONE, CONTROLS, type Pose } from '../core/pose';
+import { useDragPosing } from './useDragPosing';
 // #endregion
 
 // #region Types and config
@@ -35,30 +36,76 @@ const SAMPLE_PROFILES = Object.values(
 
 const CHARACTER_SPACING = 0.9;
 const RULER_HEIGHT_METERS = 2.5;
+const UNDO_STEPS = 100;
+// Changes with the same key closer together than this are one undo step (one slider drag).
+const SAME_GESTURE_MILLISECONDS = 800;
 // #endregion
 
 // #region Main flow
 export function App() {
-  const [characters, setCharacters] = useState<SceneCharacter[]>(() =>
-    [...SAMPLE_PROFILES]
+  const [scene, setScene] = useState(() => ({
+    characters: [...SAMPLE_PROFILES]
       .sort((a, b) => b.heightCm - a.heightCm)
-      .map((profile, index, all) => ({
+      .map((profile, index, all): SceneCharacter => ({
         id: newCharacterId(),
         profile: normalizeProfile(profile),
         pose: { position: [(index - (all.length - 1) / 2) * CHARACTER_SPACING, 0, 0] },
       })),
-  );
+    past: [] as SceneCharacter[][],
+    future: [] as SceneCharacter[][],
+  }));
+  const characters = scene.characters;
+  const lastChange = useRef({ key: '', time: 0 });
   const [selectedId, setSelectedId] = useState<string | null>(() => characters[0]?.id ?? null);
   const [selectedControl, setSelectedControl] = useState<string | null>(null);
   const [isFrontView, setIsFrontView] = useState(false);
+  const [isPinFeet, setIsPinFeet] = useState(false);
+
+  const changeCharacters = (update: (list: SceneCharacter[]) => SceneCharacter[], key: string) => {
+    const now = performance.now();
+    // A body drag has its own key, so holding still mid-drag doesn't split it into two undo steps.
+    const isSameGesture = key === lastChange.current.key && (key.startsWith('drag:') || now - lastChange.current.time < SAME_GESTURE_MILLISECONDS);
+    lastChange.current = { key, time: now };
+    setScene((current) => ({
+      characters: update(current.characters),
+      past: isSameGesture ? current.past : [...current.past.slice(-UNDO_STEPS), current.characters],
+      future: [],
+    }));
+  };
+
+  // Reference images are local blob URLs, not part of the scene, so undo keeps whatever image is showing now.
+  const travel = (direction: 'undo' | 'redo') => {
+    lastChange.current = { key: '', time: 0 };
+    setScene((current) => {
+      const source = direction === 'undo' ? current.past : current.future;
+      if (source.length === 0) return current;
+      const target = direction === 'undo' ? source[source.length - 1] : source[0];
+      const restored = target.map((character) => ({ ...character, reference: current.characters.find((now) => now.id === character.id)?.reference }));
+      if (direction === 'undo') return { characters: restored, past: current.past.slice(0, -1), future: [current.characters, ...current.future] };
+      return { characters: restored, past: [...current.past, current.characters], future: current.future.slice(1) };
+    });
+  };
+
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.target instanceof HTMLInputElement && event.target.type === 'text') return;
+      const key = event.key.toLowerCase();
+      if (key !== 'z' && key !== 'y') return;
+      event.preventDefault();
+      travel(key === 'y' || event.shiftKey ? 'redo' : 'undo');
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, []);
 
   const selected = characters.find((character) => character.id === selectedId) ?? null;
   const highlightedBones = selectedControl
     ? Object.values(CONTROLS[selectedControl].motions).flatMap((motion) => motion.bones.map(([bone]) => bone))
     : [];
 
-  const updateCharacter = (id: string, change: Partial<SceneCharacter>) =>
-    setCharacters((list) => list.map((character) => (character.id === id ? { ...character, ...change } : character)));
+  const updateCharacter = (id: string, change: Partial<SceneCharacter>, key = `${id}:${Object.keys(change).join()}`) =>
+    changeCharacters((list) => list.map((character) => (character.id === id ? { ...character, ...change } : character)), key);
 
   return (
     <div className="app">
@@ -69,15 +116,26 @@ export function App() {
             selected={selected}
             highlightedBones={highlightedBones}
             isFrontView={isFrontView}
+            isPinFeet={isPinFeet}
             onSelect={(id, control) => {
               setSelectedId(id);
               setSelectedControl(control);
             }}
+            onPose={(id, pose, gestureKey) => updateCharacter(id, { pose }, gestureKey)}
           />
         </Canvas>
-        <button className="view-toggle" onClick={() => setIsFrontView(!isFrontView)}>
-          {isFrontView ? '3D view' : 'Front view'}
-        </button>
+        <div className="stage-tools">
+          <button onClick={() => setIsFrontView(!isFrontView)}>{isFrontView ? '3D view' : 'Front view'}</button>
+          <button onClick={() => travel('undo')} disabled={scene.past.length === 0} title="Undo (Ctrl/Cmd+Z)">
+            Undo
+          </button>
+          <button onClick={() => travel('redo')} disabled={scene.future.length === 0} title="Redo (Ctrl/Cmd+Shift+Z)">
+            Redo
+          </button>
+          <button className={isPinFeet ? 'is-active' : ''} onClick={() => setIsPinFeet(!isPinFeet)} title="When on, dragging the hips bends the legs and keeps the feet where they are">
+            Pin feet {isPinFeet ? 'on' : 'off'}
+          </button>
+        </div>
       </div>
       <Panel
         characters={characters}
@@ -90,19 +148,19 @@ export function App() {
         onSelectControl={setSelectedControl}
         onUpdateCharacter={updateCharacter}
         onReplaceScene={(next) => {
-          setCharacters(next);
+          changeCharacters(() => next, 'replace');
           setSelectedId(next[0]?.id ?? null);
           setSelectedControl(null);
         }}
         onAddCharacter={(profile) => {
           const rightmost = Math.max(-CHARACTER_SPACING, ...characters.map((character) => character.pose.position?.[0] ?? 0));
           const added: SceneCharacter = { id: newCharacterId(), profile: normalizeProfile(profile), pose: { position: [rightmost + CHARACTER_SPACING, 0, 0] } };
-          setCharacters([...characters, added]);
+          changeCharacters((list) => [...list, added], 'add');
           setSelectedId(added.id);
           setSelectedControl(null);
         }}
         onRemoveCharacter={(id) => {
-          setCharacters(characters.filter((character) => character.id !== id));
+          changeCharacters((list) => list.filter((character) => character.id !== id), 'remove');
           setSelectedId(null);
           setSelectedControl(null);
         }}
@@ -116,11 +174,14 @@ interface StageProps {
   selected: SceneCharacter | null;
   highlightedBones: string[];
   isFrontView: boolean;
+  isPinFeet: boolean;
   onSelect: (id: string, control: string | null) => void;
+  onPose: (id: string, pose: Pose, gestureKey: string) => void;
 }
 
-function Stage({ characters, selected, highlightedBones, isFrontView, onSelect }: StageProps) {
+function Stage({ characters, selected, highlightedBones, isFrontView, isPinFeet, onSelect, onPose }: StageProps) {
   const viewportHeight = useThree((state) => state.size.height);
+  const startDrag = useDragPosing(isPinFeet, onPose);
   const leftmost = Math.min(0, ...characters.map((character) => character.pose.position?.[0] ?? 0));
   const focusX = selected?.pose.position?.[0] ?? 0;
   const focusHeight = selected ? selected.profile.heightCm / 100 : 1.7;
@@ -171,7 +232,10 @@ function Stage({ characters, selected, highlightedBones, isFrontView, onSelect }
             profile={character.profile}
             pose={character.pose}
             highlightedBones={character.id === selected?.id ? highlightedBones : []}
-            onSelectBone={(bone) => onSelect(character.id, CONTROL_FOR_BONE[bone] ?? null)}
+            onGrab={(grab) => {
+              onSelect(character.id, CONTROL_FOR_BONE[grab.bone] ?? null);
+              startDrag(character, grab);
+            }}
           />
           {character.reference && <ReferenceImage character={character} />}
           {character.id === selected?.id && (

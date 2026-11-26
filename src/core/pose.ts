@@ -38,6 +38,14 @@ export interface SolvedPose {
   rotations: Record<string, Quaternion>;
 }
 
+export interface PoseFile {
+  format: 'poser.pose/1';
+  name: string;
+  joints: Record<string, Record<string, number>>;
+}
+
+export type MirrorMode = 'left-to-right' | 'right-to-left' | 'flip';
+
 export interface BoneWorld {
   position: Vector3;
   quaternion: Quaternion;
@@ -140,7 +148,8 @@ const LEFT_AND_MIDLINE_CONTROLS: Record<string, Control> = {
   ankle_l: {
     label: 'Left ankle',
     motions: {
-      dorsiflexion: { axis: [-1, 0, 0], min: -50, max: 20, bones: [['ankle_l', 1]] },
+      // 20 degrees is the textbook passive value; standing with the body weight on it (lunge, deep squat) the ankle bends about 35.
+      dorsiflexion: { axis: [-1, 0, 0], min: -50, max: 35, bones: [['ankle_l', 1]] },
       inversion: { axis: [0, 0, -1], min: -15, max: 35, bones: [['ankle_l', 1]] },
     },
   },
@@ -237,6 +246,35 @@ export function forwardKinematics(rig: Rig, solved: SolvedPose): Record<string, 
     };
   }
   return world;
+}
+
+export function mirrorPose(pose: Pose, mode: MirrorMode): Pose {
+  const joints: Record<string, Record<string, number>> = {};
+  for (const [controlName, angles] of Object.entries(pose.joints ?? {})) {
+    const side = controlName.match(/_(l|r)$/)?.[1];
+    const otherSide = controlName.replace(/_(l|r)$/, side === 'l' ? '_r' : '_l');
+
+    if (!side) {
+      if (mode !== 'flip') {
+        joints[controlName] = angles;
+        continue;
+      }
+      // A midline bend or turn to the left becomes the same to the right; forward stays forward. The heading stays.
+      const flipped: Record<string, number> = {};
+      for (const [motionName, degrees] of Object.entries(angles)) {
+        const isSideways = CONTROLS[controlName]?.motions[motionName]?.axis[0] === 0;
+        flipped[motionName] = isSideways && !(controlName === 'pelvis' && motionName === 'turn') ? -degrees : degrees;
+      }
+      joints[controlName] = flipped;
+      continue;
+    }
+
+    // Right-side controls are defined as mirror images, so the same angles mean the mirrored motion.
+    if (mode === 'flip') joints[otherSide] = angles;
+    if (mode === 'left-to-right' && side === 'l') joints[controlName] = joints[otherSide] = angles;
+    if (mode === 'right-to-left' && side === 'r') joints[controlName] = joints[otherSide] = angles;
+  }
+  return { ...pose, joints };
 }
 
 export function restRotation(degrees: Vec3 | undefined): Quaternion {

@@ -1,0 +1,1 @@
+{ "format": "poser.pose/1", "name": "Kneel on one knee", "joints": { "hip_l": { "flexion": 85 }, "knee_l": { "flexion": 85 }, "knee_r": { "flexion": 90 }, "toes_r": { "flexion": -60 }, "shoulder_l": { "flexion": 30 }, "elbow_l": { "flexion": 60 }, "elbow_r": { "flexion": 10 } } }

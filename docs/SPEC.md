@@ -12,7 +12,7 @@ GitHub Pages. Used by one person and friends; no accounts, no server.
 | Platform | Web app (React + Three.js via React Three Fiber), static build | One codebase for desktop and mobile; free hosting |
 | Body | Generated in code from a small profile, not a sculpted mesh | One generator covers chibi to tall; agents can edit numbers |
 | Joints | Anatomical names, real range-of-motion limits, coupled motion | Poses stay human; agents can say "elbow flexion 90" |
-| Sharing | JSON files: `*.oc.json` (character), `*.scene.json` (scene) | Send on Discord etc.; no server needed |
+| Sharing | JSON files: `*.oc.json` (character), `*.scene.json` (scene), `*.pose.json` (pose) | Send on Discord etc.; no server needed |
 | AI agents | Same core library as the app, used from a CLI and a local MCP server | Claude Code on the user's computer only |
 | Output | PNG render (Blender/glTF export later, optional) | |
 
@@ -37,6 +37,8 @@ values, see sources). Coupled motion:
 - Fingertip joint follows the middle finger joint at 2/3.
 - Shoulder girdle rises when the arm goes past 30° (scapulohumeral rhythm, about 2:1). Shoulder
   angles stay measured against the chest.
+- Dragging solves for the anatomical angles (damped least squares, `src/core/reach.ts`), so a dragged
+  pose obeys the same limits and coupling as the sliders. Twists are a last resort for the solver.
 - Ball joints combine their motions as swing + twist: the swing turns by the largest angle toward the
   blend of the motions, the twist is around the segment's own axis. "Flexion 90 + abduction 90" means
   horizontal, halfway between front and side.
@@ -44,7 +46,9 @@ values, see sources). Coupled motion:
 ## Roadmap
 
 1. ✅ Rig, limits, coupled motion, segmented body, 4 sample OCs, sliders, reference-image overlay, file save/open.
-2. Direct posing: drag-to-rotate gizmos, drag hands/feet with IK, mirror pose, pose library. Touch-first.
+2. ✅ Direct posing: drag any body part (hands and feet pull the whole limb), move the hips with or without
+   pinned feet, undo/redo, mirror and flip, pose library (presets + My poses + `.pose.json` files), drop to floor.
+   Twists (head turn, forearm roll, …) stay on sliders.
 3. Lights: point/spot/sun/ambient with color, intensity, shadows; presets. PNG export.
 4. Contact solver (hand on knee, chest on back) + body collision; CLI (`poser render`) and MCP server for agents.
 5. Share links (character compressed into the URL), GitHub Pages deploy, mobile polish.
@@ -52,5 +56,6 @@ values, see sources). Coupled motion:
 ## Sources
 
 - Range of motion: https://www.physio-pedia.com/Range_of_Motion_Normative_Values, https://wikem.org/wiki/Joint_ROM_(Table)
+  (ankle dorsiflexion uses the weight-bearing value, 35°, so squats and lunges are possible)
 - Scapulohumeral rhythm: https://www.physio-pedia.com/Scapulohumeral_Rhythm, https://pmc.ncbi.nlm.nih.gov/articles/PMC3377910
 - OC heights and silhouettes: https://soul-collection.chairwhere.com/height-chart
