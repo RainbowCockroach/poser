@@ -271,7 +271,8 @@ export function buildRig(input: CharacterProfile): Rig {
       name: 'thumb_1_l',
       parent: 'wrist_l',
       offset: [-0.08 * palmWidth, -0.12 * handLength, 0.3 * palmWidth],
-      restRotationDegrees: [-40, 0, -15],
+      // A relaxed thumb leans about 20° away from the index and 25° in front of the palm.
+      restRotationDegrees: [-22, 0, -24],
       shapes: [{ kind: 'capsule', start: [0, 0, 0], end: [0, -thumbLengths[0], 0], radiusStart: fingerRadius * 1.5, radiusEnd: fingerRadius * 1.2 }],
     },
     {

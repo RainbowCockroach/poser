@@ -1,6 +1,7 @@
 /*
  * Checks hand shapes: they land on the right hand, leave the rest of the pose alone, and really
- * close the hand (fist) or bring the thumb and index tips together (pinch).
+ * close the hand (fist), bring the thumb and index tips together (pinch), and lay the thumb across the curled
+ * fingers from the front, the way a real thumb holds them (peace, fist).
  * Run: npm test
  */
 
@@ -72,6 +73,20 @@ describe('hand shapes', () => {
     const pose = applyHandShape({}, 'r', 'pinch');
     const gap = fingertip(pose, 'thumb_3_r').distanceTo(fingertip(pose, 'index_3_r'));
     expect(gap).toBeLessThan(0.025);
+  });
+
+  it('lays the thumb on the front of the curled fingers it holds down, pointing across the hand', () => {
+    // Potat's left palm faces -X and its little finger is on the -Z side.
+    for (const [shape, heldFinger] of [['peace', 'ring_2_l'], ['fist', 'middle_2_l'], ['point', 'middle_2_l']]) {
+      const pose = applyHandShape({}, 'l', shape);
+      const world = forwardKinematics(rig, solvePose(pose));
+      const thumbPad = world.thumb_3_l.position.clone().lerp(fingertip(pose, 'thumb_3_l'), 0.6);
+      const held = world[heldFinger].position.clone().lerp(fingertip(pose, heldFinger), 0.5);
+      // Centre to centre: the thumb and finger thicknesses take about 2 cm of this.
+      expect(thumbPad.distanceTo(held)).toBeLessThan(0.045);
+      expect(thumbPad.x).toBeLessThan(held.x);
+      expect(fingertip(pose, 'thumb_3_l').sub(world.thumb_3_l.position).normalize().z).toBeLessThan(-0.4);
+    }
   });
 
   it('names the known shapes when one is unknown', () => {

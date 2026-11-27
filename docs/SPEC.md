@@ -102,6 +102,13 @@ no wheel or middle button), so extra buttons and keys are only faster ways.
     the joint, so the lower thigh means the knee). Overlaps show as a notice on the stage with a Fix button. Three
     first-run tips replace the hint paragraph. A setting in the "?" sheet makes only a pencil pose, fingers then
     only move the camera.
+15. ✅ Anatomical thumb: the base (CMC) is a saddle joint with three motions, across the palm, away from the palm,
+    and a turn about its own length (opposition, about 17° in a real hand, up to 35° here), so the pad can face the
+    fingers. The knuckles curl it across the palm (its nail faces sideways compared to the fingers'). A relaxed thumb
+    leans about 20° from the index and 25° in front of the palm. Hand shapes were fitted so the thumb lies across the
+    front of the curled fingers it holds (peace: ring and little finger; fist and point: index and middle).
+    Ranges: CMC flexion/extension ~53°, abduction ~42°, rotation ~17° (Cooney 1981); MCP flexion 55–60°, IP flexion
+    80–90° with ~15° over-extension (https://pmc.ncbi.nlm.nih.gov/articles/PMC4372184, https://eatonhand.com/clf/clf218.htm).
 
 ## Sources
 

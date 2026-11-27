@@ -125,7 +125,7 @@ with the same meaning (abduction is always "away from the body").
 | `shoulder_l` | `flexion` (arm forward/up), `abduction` (arm out to the side/up), `internal_rotation` |
 | `elbow_l` | `flexion`, `pronation` (palm turns back/down) |
 | `wrist_l` | `flexion` (toward the palm), `radial_deviation` (toward the thumb) |
-| `thumb_l` | `cmc_flexion`, `cmc_abduction`, `mcp_flexion`, `ip_flexion` |
+| `thumb_l` | `cmc_flexion` (across the palm), `cmc_abduction` (away from the palm), `cmc_opposition` (turns the pad toward the fingers), `mcp_flexion`, `ip_flexion` |
 | `index_l`, `middle_l`, `ring_l`, `pinky_l` | `base_flexion`, `spread`, `middle_flexion` (fingertip follows) |
 | `hip_l` | `flexion` (thigh forward/up), `abduction` (leg out), `internal_rotation` |
 | `knee_l` | `flexion` |

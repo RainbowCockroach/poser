@@ -40,7 +40,7 @@ const CLOSE_ENOUGH_METERS = 0.0005;
 const STRAIGHT_HINGE_START_DEGREES = 5;
 // Twisting around the segment's own axis is a last resort, so arms keep a natural elbow direction.
 const TWIST_WEIGHT = 0.35;
-const TWIST_MOTIONS = new Set(['turn', 'rotation', 'internal_rotation', 'pronation']);
+const TWIST_MOTIONS = new Set(['turn', 'rotation', 'internal_rotation', 'pronation', 'cmc_opposition']);
 // A body part this far below a prop's top still lands on it (a sitting pose settles onto the seat); deeper means it stands beside or inside it.
 const LAND_ON_PROP_METERS = 0.25;
 // #endregion

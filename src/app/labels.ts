@@ -74,8 +74,9 @@ const MOTION_WORDS: Record<string, Record<string, MotionWords>> = {
     radial_deviation: { label: 'Tilt the hand', low: 'toward pinky', high: 'toward thumb' },
   },
   thumb: {
-    cmc_flexion: { label: 'Thumb across the palm', low: 'out', high: 'across' },
-    cmc_abduction: { label: 'Thumb away from the hand', low: 'tucked', high: 'away' },
+    cmc_flexion: { label: 'Thumb across the palm', low: 'out to the side', high: 'across' },
+    cmc_abduction: { label: 'Thumb away from the palm', low: 'flat', high: 'away' },
+    cmc_opposition: { label: 'Turn the thumb to face the fingers', low: 'away', high: 'facing' },
     mcp_flexion: { label: 'Curl the thumb', low: 'straight', high: 'curled' },
     ip_flexion: { label: 'Curl the thumb tip', low: 'back', high: 'curled' },
   },

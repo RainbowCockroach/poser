@@ -120,11 +120,15 @@ const LEFT_AND_MIDLINE_CONTROLS: Record<string, Control> = {
   },
   thumb_l: {
     label: 'Left thumb',
+    // The base (CMC) is a saddle joint: across the palm, away from the palm, and a turn of the thumb about its own
+    // length (opposition) that brings its pad to face the fingers. The two knuckles curl it across the palm, because
+    // a thumb's nail faces sideways compared to the fingers' nails.
     motions: {
-      cmc_flexion: { axis: [1, 0, 0], min: -10, max: 50, bones: [['thumb_1_l', 1]] },
+      cmc_flexion: { axis: [1, 0, 0], min: -25, max: 50, bones: [['thumb_1_l', 1]] },
       cmc_abduction: { axis: [0, 0, -1], min: -10, max: 70, bones: [['thumb_1_l', 1]] },
-      mcp_flexion: { axis: [0.4, 0, -0.92], min: 0, max: 55, bones: [['thumb_2_l', 1]] },
-      ip_flexion: { axis: [0.4, 0, -0.92], min: -15, max: 80, bones: [['thumb_3_l', 1]] },
+      cmc_opposition: { axis: [0, 1, 0], min: -10, max: 35, bones: [['thumb_1_l', 1]] },
+      mcp_flexion: { axis: [0.7, 0, -0.71], min: -10, max: 60, bones: [['thumb_2_l', 1]] },
+      ip_flexion: { axis: [0.7, 0, -0.71], min: -15, max: 85, bones: [['thumb_3_l', 1]] },
     },
   },
   index_l: fingerControl('Left index finger', 'index', [-1, 0, 0]),

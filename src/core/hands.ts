@@ -21,13 +21,13 @@ export interface HandShape {
 export const FINGER_CONTROLS = ['thumb', 'index', 'middle', 'ring', 'pinky'];
 
 const CURLED = { base_flexion: 85, middle_flexion: 100 };
-const THUMB_OVER_FINGERS = { cmc_flexion: 42, cmc_abduction: 12, mcp_flexion: 50, ip_flexion: 50 };
+const THUMB_OVER_FINGERS = { cmc_flexion: -10, cmc_abduction: -10, cmc_opposition: -10, mcp_flexion: 30, ip_flexion: 45 };
 
 export const HAND_SHAPES: Record<string, HandShape> = {
   relaxed: {
     label: 'Relaxed',
     fingers: {
-      thumb: { cmc_abduction: 20, mcp_flexion: 10, ip_flexion: 10 },
+      thumb: { cmc_flexion: 5, cmc_abduction: 5, mcp_flexion: 10, ip_flexion: 15 },
       index: { base_flexion: 15, middle_flexion: 20 },
       middle: { base_flexion: 20, middle_flexion: 25 },
       ring: { base_flexion: 25, middle_flexion: 30 },
@@ -40,12 +40,12 @@ export const HAND_SHAPES: Record<string, HandShape> = {
   },
   flat: {
     label: 'Flat',
-    fingers: { thumb: { cmc_abduction: 10 }, index: {}, middle: {}, ring: {}, pinky: {} },
+    fingers: { thumb: { cmc_flexion: -5, cmc_abduction: -10 }, index: {}, middle: {}, ring: {}, pinky: {} },
   },
   spread: {
     label: 'Spread',
     fingers: {
-      thumb: { cmc_abduction: 65, ip_flexion: -10 },
+      thumb: { cmc_flexion: -25, cmc_abduction: 10, mcp_flexion: -5, ip_flexion: -10 },
       index: { spread: 15, base_flexion: -5 },
       middle: { base_flexion: -5 },
       ring: { spread: 12, base_flexion: -5 },
@@ -54,16 +54,16 @@ export const HAND_SHAPES: Record<string, HandShape> = {
   },
   point: {
     label: 'Point',
-    fingers: { thumb: THUMB_OVER_FINGERS, index: {}, middle: CURLED, ring: CURLED, pinky: CURLED },
+    fingers: { thumb: { cmc_flexion: 10, cmc_abduction: -5, cmc_opposition: -10, mcp_flexion: 20, ip_flexion: 35 }, index: {}, middle: CURLED, ring: CURLED, pinky: CURLED },
   },
   peace: {
     label: 'Peace',
-    fingers: { thumb: THUMB_OVER_FINGERS, index: { spread: 12 }, middle: { spread: -12 }, ring: CURLED, pinky: CURLED },
+    fingers: { thumb: { cmc_flexion: 40, cmc_abduction: 10, cmc_opposition: -5, mcp_flexion: -10, ip_flexion: 35 }, index: { spread: 12 }, middle: { spread: -12 }, ring: CURLED, pinky: CURLED },
   },
   grip: {
     label: 'Grip',
     fingers: {
-      thumb: { cmc_flexion: 30, cmc_abduction: 45, mcp_flexion: 25, ip_flexion: 25 },
+      thumb: { cmc_flexion: 40, cmc_abduction: 35, ip_flexion: 35 },
       index: { base_flexion: 55, middle_flexion: 70 },
       middle: { base_flexion: 60, middle_flexion: 75 },
       ring: { base_flexion: 65, middle_flexion: 80 },
@@ -73,7 +73,7 @@ export const HAND_SHAPES: Record<string, HandShape> = {
   pinch: {
     label: 'Pinch',
     fingers: {
-      thumb: { cmc_flexion: 30, cmc_abduction: 20, ip_flexion: 60 },
+      thumb: { cmc_flexion: 20, cmc_abduction: 20, mcp_flexion: 20, ip_flexion: -15 },
       index: { base_flexion: 75, middle_flexion: 30 },
       middle: { base_flexion: 10, middle_flexion: 10, spread: -5 },
       ring: { base_flexion: 15, middle_flexion: 15, spread: 5 },
