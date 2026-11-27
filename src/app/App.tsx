@@ -85,6 +85,8 @@ const MIN_FRAME_RADIUS = 0.12;
 const FRAME_MARGIN = 0.08;
 const THREE_QUARTER_DEGREES = 35;
 const PENCIL_ONLY_STORAGE_KEY = 'poser.pencilOnly';
+// The click a lifted finger makes arrives within this long after it lifts.
+const MENU_SETTLE_MILLISECONDS = 350;
 // Overlaps are checked this long after the last change, not on every frame of a drag.
 const OVERLAP_CHECK_MILLISECONDS = 400;
 // On screens wider than phones the mode rail and the card float over the stage; these match styles.css (rail and card plus gaps).
@@ -135,6 +137,8 @@ export function App() {
     }
   });
   const [partMenu, setPartMenu] = useState<{ characterId: string; bone: string; clientX: number; clientY: number } | null>(null);
+  // After a long press the finger is still down; the click from lifting it must not close the menu it just opened.
+  const isMenuWaitingForRelease = useRef(false);
   const [exportRequest, setExportRequest] = useState<ExportRequest | null>(null);
   const [sceneVersion, setSceneVersion] = useState(0);
   const [lensMm, setLensMm] = useState(DEFAULT_LENS_MM);
@@ -411,10 +415,14 @@ export function App() {
             onTouchDrop={touchOnDrop}
             selectedControl={selectedControl}
             pins={pins}
-            onMenu={(characterId, bone, clientX, clientY) => {
+            onMenu={(characterId, bone, clientX, clientY, isFingerDown) => {
               setSelectedId(characterId);
               setSelectedControl(CONTROL_FOR_BONE[bone] ?? null);
               setPartMenu({ characterId, bone, clientX, clientY });
+              isMenuWaitingForRelease.current = isFingerDown;
+              if (!isFingerDown) return;
+              const release = () => setTimeout(() => (isMenuWaitingForRelease.current = false), MENU_SETTLE_MILLISECONDS);
+              window.addEventListener('pointerup', release, { once: true });
             }}
             onTwist={(id, control, motion, degrees, startPose, gestureKey) =>
               updateCharacter(id, { pose: { ...startPose, joints: { ...startPose.joints, [control]: { ...startPose.joints?.[control], [motion]: degrees } } } }, gestureKey)
@@ -471,7 +479,13 @@ export function App() {
         };
         return (
           <>
-            <div className="menu-backdrop" onClick={() => setPartMenu(null)} onContextMenu={(event) => event.preventDefault()} />
+            <div
+              className="menu-backdrop"
+              onClick={() => {
+                if (!isMenuWaitingForRelease.current) setPartMenu(null);
+              }}
+              onContextMenu={(event) => event.preventDefault()}
+            />
             <div className="menu-list part-menu" style={{ left: Math.min(partMenu.clientX, window.innerWidth - 230), top: Math.min(partMenu.clientY, window.innerHeight - 220) }} role="menu">
               <strong>{partName(controlName)}</strong>
               <button onClick={act(() => lookCloser(character, controlName))}>Look closer</button>
@@ -601,7 +615,7 @@ interface StageProps {
   onTouchDrop: (character: SceneCharacter, part: string, target: TouchTarget) => void;
   selectedControl: string | null;
   pins: Record<string, Pin[]>;
-  onMenu: (characterId: string, bone: string, clientX: number, clientY: number) => void;
+  onMenu: (characterId: string, bone: string, clientX: number, clientY: number, isFingerDown: boolean) => void;
   onTwist: (id: string, control: string, motion: string, degrees: number, startPose: Pose, gestureKey: string) => void;
   exportRequest: ExportRequest | null;
   sceneVersion: number;
@@ -635,7 +649,7 @@ function Stage(props: StageProps) {
   const invalidate = useThree((state) => state.invalidate);
   const startDrag = useDragPosing({
     onPose,
-    onLongPress: (character, bone, clientX, clientY) => props.onMenu(character.id, bone, clientX, clientY),
+    onLongPress: (character, bone, clientX, clientY) => props.onMenu(character.id, bone, clientX, clientY, true),
     onTouchTarget: props.onTouchTarget,
     onTouchDrop: props.onTouchDrop,
   });
@@ -780,7 +794,7 @@ function Stage(props: StageProps) {
               onSelect(character.id, CONTROL_FOR_BONE[bone] ?? null);
               props.onLookCloser(character, bone);
             }}
-            onMenu={(bone, clientX, clientY) => props.onMenu(character.id, bone, clientX, clientY)}
+            onMenu={(bone, clientX, clientY) => props.onMenu(character.id, bone, clientX, clientY, false)}
           />
           {character.id === selected?.id && props.isShowingHandles && !isExporting && (
             <Handles
@@ -792,7 +806,7 @@ function Stage(props: StageProps) {
                 onSelect(character.id, CONTROL_FOR_BONE[grab.bone] ?? null);
                 startDrag(character, grab, props.pins[character.id] ?? []);
               }}
-              onMenu={(bone, clientX, clientY) => props.onMenu(character.id, bone, clientX, clientY)}
+              onMenu={(bone, clientX, clientY) => props.onMenu(character.id, bone, clientX, clientY, false)}
               onTwist={(control, motion, degrees, startPose, gestureKey) => props.onTwist(character.id, control, motion, degrees, startPose, gestureKey)}
             />
           )}
