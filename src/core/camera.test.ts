@@ -6,7 +6,7 @@
 
 // #region Setup
 import { describe, expect, it } from 'vitest';
-import { distanceForLens, fieldOfViewDegrees, normalizeView } from './camera.ts';
+import { distanceForLens, fieldOfViewDegrees, fisheyeEquivalentLensMm, fisheyePoint, fisheyeRay, FISHEYE_HALF_DIAGONAL_DEGREES, normalizeView } from './camera.ts';
 // #endregion
 
 // #region Tests
@@ -28,6 +28,17 @@ describe('camera', () => {
     expect(normalizeView({ position: [0, 1, 5], target: [0, 1, 0] })?.lensMm).toBe(33);
     expect(normalizeView({ position: [0, 1] as never, target: [0, 1, 0] })).toBeNull();
     expect(normalizeView({ position: [0, 1, 0], target: [0, 1, 0] })).toBeNull();
+  });
+  it('bends fisheye rays evenly by angle, reaching 75° in the corners, and maps them back', () => {
+    const halfDiagonal = Math.hypot(1.6, 1);
+    const [cornerX, cornerY] = fisheyeRay(1.6, 1, halfDiagonal);
+    expect((Math.atan(Math.hypot(cornerX, cornerY)) * 180) / Math.PI).toBeCloseTo(FISHEYE_HALF_DIAGONAL_DEGREES, 3);
+    const [backX, backY] = fisheyePoint(...fisheyeRay(0.7, -0.3, halfDiagonal), halfDiagonal);
+    expect(backX).toBeCloseTo(0.7, 6);
+    expect(backY).toBeCloseTo(-0.3, 6);
+    expect(fisheyeEquivalentLensMm(halfDiagonal)).toBeGreaterThan(14);
+    expect(fisheyeEquivalentLensMm(halfDiagonal)).toBeLessThan(24);
+    expect(normalizeView({ position: [0, 1, 3], target: [0, 1, 0], lensMm: 33, fisheye: true })?.fisheye).toBe(true);
   });
 });
 // #endregion

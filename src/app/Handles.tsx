@@ -7,10 +7,11 @@
 // #region Setup
 import { useMemo } from 'react';
 import { useThree, type ThreeEvent } from '@react-three/fiber';
-import { Quaternion, Vector3 } from 'three';
+import { Quaternion, Vector2, Vector3 } from 'three';
 import { buildRig, type Vec3 } from '../core/rig';
 import { CONTROLS, forwardKinematics, solvePose, type Pose } from '../core/pose';
 import type { SceneCharacter } from './App';
+import { toScreenPoint } from './fisheyeView';
 // #endregion
 
 // #region Config
@@ -53,7 +54,8 @@ export function Handles({ character, selectedControl, isPencilOnly, onTwist }: H
     if (event.nativeEvent.button !== 0 || (isPencilOnly && event.nativeEvent.pointerType === 'touch')) return;
     event.stopPropagation();
     const bounds = canvas.getBoundingClientRect();
-    const projected = center.clone().project(camera);
+    const projectedPoint = center.clone().project(camera);
+    const projected = toScreenPoint(new Vector2(projectedPoint.x, projectedPoint.y));
     const centerX = bounds.left + ((projected.x + 1) / 2) * bounds.width;
     const centerY = bounds.top + ((1 - projected.y) / 2) * bounds.height;
     const angleOf = (x: number, y: number) => Math.atan2(y - centerY, x - centerX);

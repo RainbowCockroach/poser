@@ -1,7 +1,8 @@
 /*
  * The objects list, like the layers panel of a drawing app: the scene and the camera, then every character, prop and
  * light, each with a lock. Picking a row selects that object and the card shows what it can do. "+ Add" adds any
- * kind of object. A column on the left on wide screens, a strip along the bottom on phones.
+ * kind of object; the eye hides one; double-clicking a row frames it on the stage. A column on the left on wide
+ * screens, a strip along the bottom on phones.
  */
 
 // #region Setup
@@ -31,12 +32,14 @@ interface OutlinerProps {
   selected: ObjectRef;
   onSelect: (object: ObjectRef) => void;
   onToggleLock: (object: ObjectRef) => void;
+  onToggleHidden: (object: ObjectRef) => void;
+  onFocus: (object: ObjectRef) => void;
   onAddCharacter: () => void;
   onAddProp: (kind: PropKind) => void;
   onAddLight: (kind: LightKind) => void;
 }
 
-export function Outliner({ characters, sceneProps, lights, selected, onSelect, onToggleLock, onAddCharacter, onAddProp, onAddLight }: OutlinerProps) {
+export function Outliner({ characters, sceneProps, lights, selected, onSelect, onToggleLock, onToggleHidden, onFocus, onAddCharacter, onAddProp, onAddLight }: OutlinerProps) {
   const [isAddOpen, setIsAddOpen] = useState(false);
   const isSelected = (object: ObjectRef) => object.kind === selected.kind && (object.id === selected.id || object.kind === 'scene' || object.kind === 'camera');
 
@@ -56,12 +59,23 @@ export function Outliner({ characters, sceneProps, lights, selected, onSelect, o
     lightLabels.set(light.id, count === 1 ? LIGHT_LABELS[light.kind] : `${LIGHT_LABELS[light.kind]} ${count}`);
   }
 
-  const row = (object: ObjectRef, label: string, swatch: string | null, isLocked: boolean | null) => (
-    <div key={`${object.kind}:${object.id}`} className={`outliner-row${isSelected(object) ? ' is-selected' : ''}${isLocked ? ' is-locked' : ''}`}>
-      <button className="outliner-name" onClick={() => onSelect(object)} aria-pressed={isSelected(object)}>
+  const row = (object: ObjectRef, label: string, swatch: string | null, isLocked: boolean | null, isHidden = false) => (
+    <div key={`${object.kind}:${object.id}`} className={`outliner-row${isSelected(object) ? ' is-selected' : ''}${isLocked ? ' is-locked' : ''}${isHidden ? ' is-hidden' : ''}`}>
+      <button className="outliner-name" onClick={() => onSelect(object)} onDoubleClick={() => onFocus(object)} aria-pressed={isSelected(object)}>
         {swatch && <span className="outliner-swatch" style={{ background: swatch }} />}
         <span>{label}</span>
       </button>
+      {isLocked !== null && (
+        <button
+          className="outliner-eye"
+          onClick={() => onToggleHidden(object)}
+          aria-pressed={isHidden}
+          aria-label={isHidden ? `Show ${label}` : `Hide ${label}`}
+          title={isHidden ? `${label} is hidden. Click to show it.` : `Hide ${label}`}
+        >
+          <EyeIcon isOpen={!isHidden} />
+        </button>
+      )}
       {isLocked !== null && (
         <button
           className="outliner-lock"
@@ -110,13 +124,22 @@ export function Outliner({ characters, sceneProps, lights, selected, onSelect, o
         {row({ kind: 'scene', id: '' }, 'Scene', null, null)}
         {row({ kind: 'camera', id: '' }, 'Camera', null, null)}
         {characters.length > 0 && <span className="outliner-group">Characters</span>}
-        {characters.map((character) => row({ kind: 'character', id: character.id }, character.profile.name, character.profile.color, character.isLocked === true))}
+        {characters.map((character) => row({ kind: 'character', id: character.id }, character.profile.name, character.profile.color, character.isLocked === true, character.isHidden === true))}
         {sceneProps.length > 0 && <span className="outliner-group">Props</span>}
-        {sceneProps.map((prop) => row({ kind: 'prop', id: prop.id }, propLabels.get(prop.id)!, prop.color, prop.isLocked === true))}
+        {sceneProps.map((prop) => row({ kind: 'prop', id: prop.id }, propLabels.get(prop.id)!, prop.color, prop.isLocked === true, prop.isHidden === true))}
         {lights.length > 0 && <span className="outliner-group">Lights</span>}
-        {lights.map((light) => row({ kind: 'light', id: light.id }, lightLabels.get(light.id)!, light.color, light.isLocked === true))}
+        {lights.map((light) => row({ kind: 'light', id: light.id }, lightLabels.get(light.id)!, light.color, light.isLocked === true, light.isHidden === true))}
       </div>
     </nav>
+  );
+}
+
+function EyeIcon({ isOpen }: { isOpen: boolean }) {
+  return (
+    <svg className="lock-icon" viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      {isOpen ? <circle cx="8" cy="8" r="2.2" fill="currentColor" /> : <path d="M2.5 13.5l11-11" stroke="currentColor" strokeWidth="1.6" />}
+    </svg>
   );
 }
 

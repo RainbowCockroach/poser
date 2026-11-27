@@ -134,6 +134,10 @@ interface PanelProps {
   onToggleLock: (object: ObjectRef) => void;
   onRemoveObject: (object: ObjectRef) => void;
   onShowLight: (id: string) => void;
+  isFisheye: boolean;
+  onToggleFisheye: () => void;
+  onToggleHidden: (object: ObjectRef) => void;
+  onFocusObject: (object: ObjectRef) => void;
 }
 
 export function Panel(props: PanelProps) {
@@ -188,7 +192,7 @@ export function Panel(props: PanelProps) {
     const turn = selected.pose.joints?.pelvis?.turn;
     const joints = structuredClone(file.joints);
     if (turn) joints.pelvis = { ...joints.pelvis, turn };
-    const pose: Pose = dropToFloor(buildRig(selected.profile), { ...selected.pose, joints }, props.sceneProps.flatMap(propBoxes));
+    const pose: Pose = dropToFloor(buildRig(selected.profile), { ...selected.pose, joints }, props.sceneProps.filter((prop) => !prop.isHidden).flatMap(propBoxes));
     props.onUpdateCharacter(selected.id, { pose });
     setMessage(`${selected.profile.name}: ${file.name}`);
   };
@@ -199,10 +203,10 @@ export function Panel(props: PanelProps) {
       const scene = data as SceneFile;
       const camera = typeof scene.camera === 'object' && scene.camera ? (normalizeView(scene.camera) ?? undefined) : undefined;
       props.onReplaceScene({
-        characters: scene.characters.map((entry) => ({ id: newCharacterId(), profile: normalizeProfile(entry.profile), pose: entry.pose ?? {}, isLocked: entry.locked === true })),
-        sceneProps: (Array.isArray(scene.props) ? scene.props.filter((prop) => typeof prop === 'object' && prop) : []).map((prop) => ({ ...normalizeProp(prop), id: newPropId(), isLocked: prop.locked === true })),
+        characters: scene.characters.map((entry) => ({ id: newCharacterId(), profile: normalizeProfile(entry.profile), pose: entry.pose ?? {}, isLocked: entry.locked === true, isHidden: entry.hidden === true })),
+        sceneProps: (Array.isArray(scene.props) ? scene.props.filter((prop) => typeof prop === 'object' && prop) : []).map((prop) => ({ ...normalizeProp(prop), id: newPropId(), isLocked: prop.locked === true, isHidden: prop.hidden === true })),
         // Scenes saved before lights existed get the default lights.
-        lights: (Array.isArray(scene.lights) ? scene.lights.filter((light) => typeof light === 'object' && light) : DEFAULT_LIGHTS).map((light) => ({ ...normalizeLight(light), id: newLightId(), isLocked: 'locked' in light && light.locked === true })),
+        lights: (Array.isArray(scene.lights) ? scene.lights.filter((light) => typeof light === 'object' && light) : DEFAULT_LIGHTS).map((light) => ({ ...normalizeLight(light), id: newLightId(), isLocked: 'locked' in light && light.locked === true, isHidden: 'hidden' in light && light.hidden === true })),
         background: /^#[0-9a-f]{6}$/i.test(scene.background ?? '') ? scene.background! : DEFAULT_BACKGROUND,
         views: (Array.isArray(scene.views) ? scene.views : []).flatMap((view) => (typeof view === 'object' && view ? (normalizeView(view) ?? []) : [])),
       }, camera);
@@ -297,9 +301,9 @@ export function Panel(props: PanelProps) {
     const camera = props.getCameraView();
     return {
       format: 'poser.scene/1',
-      characters: characters.map(({ profile, pose, isLocked }) => ({ profile, pose, ...(isLocked && { locked: true }) })),
-      ...(props.sceneProps.length > 0 && { props: props.sceneProps.map(({ id: _id, isLocked, ...prop }) => ({ ...prop, ...(isLocked && { locked: true }) })) }),
-      lights: props.lights.map(({ id: _id, isLocked, ...light }) => ({ ...light, ...(isLocked && { locked: true }) })),
+      characters: characters.map(({ profile, pose, isLocked, isHidden }) => ({ profile, pose, ...(isLocked && { locked: true }), ...(isHidden && { hidden: true }) })),
+      ...(props.sceneProps.length > 0 && { props: props.sceneProps.map(({ id: _id, isLocked, isHidden, ...prop }) => ({ ...prop, ...(isLocked && { locked: true }), ...(isHidden && { hidden: true }) })) }),
+      lights: props.lights.map(({ id: _id, isLocked, isHidden, ...light }) => ({ ...light, ...(isLocked && { locked: true }), ...(isHidden && { hidden: true }) })),
       background: props.background,
       ...(camera && { camera }),
       ...(props.views.length > 0 && { views: props.views }),
@@ -424,6 +428,11 @@ export function Panel(props: PanelProps) {
           props.onFoldCard(false);
         }}
         onToggleLock={props.onToggleLock}
+        onToggleHidden={props.onToggleHidden}
+        onFocus={(object) => {
+          props.onSelectObject(object);
+          props.onFocusObject(object);
+        }}
         onAddCharacter={() => props.onAddCharacter(DEFAULT_PROFILE)}
         onAddProp={addProp}
         onAddLight={addLight}
@@ -432,6 +441,11 @@ export function Panel(props: PanelProps) {
       <aside className={props.isCardFolded ? 'card is-collapsed' : 'card'} aria-label={cardTitle}>
         <header className="card-header">
           <strong>{cardTitle}</strong>
+          {mode !== 'scene' && (
+            <button className="card-focus" onClick={() => props.onFocusObject(selectedObject)} title="Bring it to the middle of the view (key F; double-click its row)">
+              Focus
+            </button>
+          )}
           <button className="card-toggle" onClick={() => props.onFoldCard(!props.isCardFolded)} aria-label={props.isCardFolded ? 'Show the card' : 'Fold the card away'}>
             {props.isCardFolded ? '▴' : '▾'}
           </button>
@@ -583,7 +597,7 @@ function PoseCard(props: PoseCardProps) {
             <button onClick={() => setPose(mirrorPose(pose, 'flip'))} title="Swap left and right (key X)">
               Flip
             </button>
-            <button onClick={() => setPose(dropToFloor(buildRig(profile), pose, props.sceneProps.flatMap(propBoxes)))} title="Move up or down until the lowest body part touches the floor, or a seat or step just under it (key G)">
+            <button onClick={() => setPose(dropToFloor(buildRig(profile), pose, props.sceneProps.filter((prop) => !prop.isHidden).flatMap(propBoxes)))} title="Move up or down until the lowest body part touches the floor, or a seat or step just under it (key G)">
               Drop to floor
             </button>
             <button className={props.isPinFeet ? 'is-active' : ''} aria-pressed={props.isPinFeet} onClick={props.onTogglePinFeet} title="When on, dragging the hips bends the legs and keeps the feet where they are (key P)">
@@ -860,7 +874,7 @@ function PropCard({ prop, onChangeProps, onToggleLock, onRemoveObject }: PanelPr
   );
 }
 
-function CameraEditor({ views, lensMm, onChangeLens, getCameraView, onGoToView, onChangeViews, onLookFrom, onFrameAll, isFrontView, onToggleFrontView, selected, lights, background }: PanelProps) {
+function CameraEditor({ views, lensMm, onChangeLens, getCameraView, onGoToView, onChangeViews, onLookFrom, onFrameAll, isFrontView, onToggleFrontView, selected, lights, background, isFisheye, onToggleFisheye }: PanelProps) {
   return (
     <>
       <p className="hint">{selected ? `Look at ${selected.profile.name} from:` : 'Look from:'}</p>
@@ -880,6 +894,13 @@ function CameraEditor({ views, lensMm, onChangeLens, getCameraView, onGoToView, 
         </button>
       </div>
       <h3>Lens</h3>
+      <div className="row">
+        <button className={isFisheye ? 'is-active' : ''} aria-pressed={isFisheye} onClick={onToggleFisheye} title="A very wide lens that bows straight lines outward, for dramatic close shots">
+          Fisheye {isFisheye ? 'on' : 'off'}
+        </button>
+      </div>
+      {isFisheye && <p className="hint">The fisheye replaces the lens. Move the camera close for the strongest bend; turn it off to pick a lens again.</p>}
+      <fieldset className="plain-fieldset" disabled={isFisheye}>
       <p className="hint">Lens in mm. Wide lenses stretch depth (a hand toward the camera looks huge); long ones flatten it. The characters keep their size on screen.</p>
       <div className="tiles">
         {LENS_PRESETS.map((preset) => (
@@ -893,6 +914,7 @@ function CameraEditor({ views, lensMm, onChangeLens, getCameraView, onGoToView, 
         ))}
       </div>
       <Slider label="Lens" unit=" mm" min={MIN_LENS_MM} max={MAX_LENS_MM} step={1} value={Math.round(lensMm)} onChange={onChangeLens} />
+      </fieldset>
       <div className="row">
         <button
           onClick={() => {

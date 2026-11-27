@@ -12,6 +12,7 @@ import { useThree, type ThreeEvent } from '@react-three/fiber';
 import { Object3D, Plane, Raycaster, Vector2, Vector3 } from 'three';
 import { SHADOW_TYPE, type LightEntry } from './App';
 import type { Vec3 } from '../core/rig';
+import { toSourcePointer } from './fisheyeView';
 // #endregion
 
 // #region Config
@@ -48,7 +49,7 @@ export function SceneLights({ lights, selectedLightId, isShowingMarkers, onSelec
     const raycaster = new Raycaster();
     const pointerAt = (clientX: number, clientY: number) => {
       const bounds = canvas.getBoundingClientRect();
-      raycaster.setFromCamera(new Vector2(((clientX - bounds.left) / bounds.width) * 2 - 1, -((clientY - bounds.top) / bounds.height) * 2 + 1), camera);
+      raycaster.setFromCamera(toSourcePointer(new Vector2(((clientX - bounds.left) / bounds.width) * 2 - 1, -((clientY - bounds.top) / bounds.height) * 2 + 1)), camera);
       return raycaster.ray.intersectPlane(plane, new Vector3());
     };
     const grabbed = pointerAt(event.nativeEvent.clientX, event.nativeEvent.clientY) ?? start.clone();
@@ -80,7 +81,7 @@ export function SceneLights({ lights, selectedLightId, isShowingMarkers, onSelec
 
   return (
     <>
-      {lights.map((light) => (
+      {lights.filter((light) => !light.isHidden).map((light) => (
         <group key={`${light.id}-${light.kind}`}>
           <Light light={light} />
           {isShowingMarkers && light.kind !== 'ambient' && <LightMarker light={light} isSelected={light.id === selectedLightId} onPointerDown={(event) => startDrag(light, event)} />}

@@ -9,9 +9,13 @@
 
 // #region Setup
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Canvas, useThree } from '@react-three/fiber';
+import { Canvas, events as pointerEvents, useFrame, useThree } from '@react-three/fiber';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import { FISHEYE_SHADER, fisheyeView, sourceFieldOfViewDegrees, toSourcePointer, updateFisheyeView } from './fisheyeView';
 import { Grid, Html, OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei';
-import { Box3, MOUSE, PerspectiveCamera as ThreePerspectiveCamera, SRGBColorSpace, TextureLoader, Vector2, Vector3, type Texture } from 'three';
+import { Box3, Color, MOUSE, PerspectiveCamera as ThreePerspectiveCamera, SRGBColorSpace, TextureLoader, Vector2, Vector3, type Texture } from 'three';
 import { Mannequin } from './Mannequin';
 import { Panel, type Mode, type ViewName } from './Panel';
 import type { ObjectRef } from './Outliner';
@@ -30,7 +34,7 @@ import { holdHands } from '../core/holding';
 import { Handles } from './Handles';
 import { PropMeshes, type PropEntry } from './Props';
 import { propBoxes, type SceneProp } from '../core/props';
-import { DEFAULT_LENS_MM, distanceForLens, fieldOfViewDegrees, type CameraView } from '../core/camera';
+import { DEFAULT_LENS_MM, distanceForLens, fieldOfViewDegrees, fisheyeEquivalentLensMm, type CameraView } from '../core/camera';
 import type { Vec3 } from '../core/rig';
 // #endregion
 
@@ -42,11 +46,14 @@ export interface SceneCharacter {
   reference?: { url: string; opacity: number };
   // A locked character can't be selected, dragged or posed until it is unlocked; it can still be removed.
   isLocked?: boolean;
+  // A hidden object isn't drawn, can't be clicked and doesn't count for landing on props; a hidden light is off.
+  isHidden?: boolean;
 }
 
 export interface LightEntry extends SceneLight {
   id: string;
   isLocked?: boolean;
+  isHidden?: boolean;
 }
 
 export interface SceneState {
@@ -59,9 +66,9 @@ export interface SceneState {
 
 export interface SceneFile {
   format: 'poser.scene/1';
-  characters: { profile: CharacterProfile; pose: Pose; locked?: boolean }[];
-  props?: (SceneProp & { locked?: boolean })[];
-  lights?: (SceneLight & { locked?: boolean })[];
+  characters: { profile: CharacterProfile; pose: Pose; locked?: boolean; hidden?: boolean }[];
+  props?: (SceneProp & { locked?: boolean; hidden?: boolean })[];
+  lights?: (SceneLight & { locked?: boolean; hidden?: boolean })[];
   background?: string;
   camera?: CameraView;
   views?: CameraView[];
@@ -104,7 +111,7 @@ const PART_FOR_CONTROL: Record<string, string> = {
 };
 // On screens wider than phones the objects list and the card float over the stage; these match styles.css (list and card plus gaps).
 const WIDE_STAGE_PIXELS = 760;
-const RAIL_SPACE_PIXELS = 210;
+const RAIL_SPACE_PIXELS = 226;
 const CARD_SPACE_PIXELS = 340;
 // Safari and every iPhone/iPad browser (WebKit) put the whole scene in shadow with PCF shadow maps; variance shadow maps work there.
 // three.js can't do variance shadows for lamps (point lights), so lamps cast no shadow on those browsers.
@@ -155,6 +162,7 @@ export function App() {
   const [exportRequest, setExportRequest] = useState<ExportRequest | null>(null);
   const [sceneVersion, setSceneVersion] = useState(0);
   const [lensMm, setLensMm] = useState(DEFAULT_LENS_MM);
+  const [isFisheye, setIsFisheye] = useState(false);
   const [cameraJump, setCameraJump] = useState<CameraView | null>(null);
   // The 3D camera as the user left it, kept up to date by the stage without re-rendering, for saving and "Save this view".
   const cameraView = useRef<CameraView | null>(null);
@@ -162,6 +170,7 @@ export function App() {
   const goToView = (view: CameraView) => {
     setIsFrontView(false);
     setLensMm(view.lensMm);
+    setIsFisheye(view.fisheye === true);
     setCameraJump(view);
   };
 
@@ -183,10 +192,12 @@ export function App() {
     const stageHeight = stageElement.current?.clientHeight ?? 1;
     const isWide = stageWidth > WIDE_STAGE_PIXELS && !isCleanView;
     const freeWidth = isWide ? stageWidth - RAIL_SPACE_PIXELS - (isCardFolded ? 0 : CARD_SPACE_PIXELS) : stageWidth;
-    const halfVertical = (fieldOfViewDegrees(lensMm) * Math.PI) / 360;
+    // A fisheye frames like the normal lens that shows the middle at the same size.
+    const framingLensMm = isFisheye ? fisheyeEquivalentLensMm(fisheyeView.halfDiagonal) : lensMm;
+    const halfVertical = (fieldOfViewDegrees(framingLensMm) * Math.PI) / 360;
     const halfHorizontal = Math.atan(Math.tan(halfVertical) * (freeWidth / Math.max(1, stageHeight)));
     const distance = radius / Math.sin(Math.min(halfVertical, halfHorizontal));
-    goToView({ position: center.clone().addScaledVector(direction, distance).toArray(), target: center.toArray(), lensMm });
+    goToView({ position: center.clone().addScaledVector(direction, distance).toArray(), target: center.toArray(), lensMm, fisheye: isFisheye || undefined });
   };
 
   const bonePoints = (character: SceneCharacter, isWanted: (bone: string) => boolean = () => true) => {
@@ -421,7 +432,27 @@ export function App() {
     }[view];
     frame(bonePoints(selected), direction);
   };
-  const frameAll = () => frame(characters.flatMap((character) => bonePoints(character)));
+  const frameAll = () => frame(characters.filter((character) => !character.isHidden).flatMap((character) => bonePoints(character)));
+
+  // Frames an object: a character (or its selected part), a prop, or a light with the spot it shines at.
+  const focusObject = (object: ObjectRef) => {
+    const character = object.kind === 'character' ? characters.find((entry) => entry.id === object.id) : undefined;
+    if (character) return character.id === selected?.id && selectedControl ? lookCloser(character, selectedControl) : frame(bonePoints(character));
+    const prop = object.kind === 'prop' ? sceneProps.find((entry) => entry.id === object.id) : undefined;
+    if (prop) {
+      const corners = propBoxes(prop).flatMap((box) => [-1, 1].map((sign) => new Vector3(...box.center).addScaledVector(new Vector3(...box.halfSize), sign)));
+      return frame(corners);
+    }
+    const light = object.kind === 'light' ? lights.find((entry) => entry.id === object.id) : undefined;
+    if (light && light.kind !== 'ambient') return frame([new Vector3(...light.position), new Vector3(...light.target)]);
+    frameAll();
+  };
+
+  const toggleHidden = (object: ObjectRef) => {
+    if (object.kind === 'character') changeCharacters((list) => list.map((entry) => (entry.id === object.id ? { ...entry, isHidden: !entry.isHidden } : entry)), 'hide');
+    if (object.kind === 'prop') changeScene((state) => ({ ...state, sceneProps: state.sceneProps.map((prop) => (prop.id === object.id ? { ...prop, isHidden: !prop.isHidden } : prop)) }), 'hide');
+    if (object.kind === 'light') changeScene((state) => ({ ...state, lights: state.lights.map((light) => (light.id === object.id ? { ...light, isHidden: !light.isHidden } : light)) }), 'hide');
+  };
 
   // The shortcut list people see is in Help.tsx; keep the two in step.
   const handleKey = (event: KeyboardEvent) => {
@@ -462,9 +493,8 @@ export function App() {
       return;
     }
     if (key === 'f') {
-      if (selected && selectedControl && !event.shiftKey) return lookCloser(selected, selectedControl);
-      if (!selected || event.shiftKey) return frameAll();
-      return frame(bonePoints(selected));
+      const object = focusedObject();
+      return event.shiftKey || !object ? frameAll() : focusObject(object);
     }
     if (key === 'delete' || key === 'backspace' || key === 'l') {
       const object = focusedObject();
@@ -477,7 +507,7 @@ export function App() {
     const joints = selected.pose.joints ?? {};
     const view = ({ '1': 'front', '2': 'side', '3': 'back', '4': 'three-quarter' } as Record<string, ViewName>)[key];
     if (view) return lookFrom(view);
-    if (key === 'g') return updateCharacter(selected.id, { pose: dropToFloor(buildRig(selected.profile), selected.pose, sceneProps.flatMap(propBoxes)) });
+    if (key === 'g') return updateCharacter(selected.id, { pose: dropToFloor(buildRig(selected.profile), selected.pose, sceneProps.filter((prop) => !prop.isHidden).flatMap(propBoxes)) });
     if (key === 'x') return updateCharacter(selected.id, { pose: mirrorPose(selected.pose, 'flip') });
     if (key === 'r' && event.shiftKey) return updateCharacter(selected.id, { pose: { ...selected.pose, joints: joints.pelvis?.turn ? { pelvis: { turn: joints.pelvis.turn } } : {} } });
     if (!selectedControl) return;
@@ -509,6 +539,14 @@ export function App() {
         {/* Draws only when something changes, so phones stay cool. */}
         <Canvas
           shadows={SHADOW_TYPE}
+          // With the fisheye on, a press is bent back to the spot the wide camera saw there, so it hits what is drawn under it.
+          events={(store) => ({
+            ...pointerEvents(store),
+            compute: (event, state) => {
+              state.pointer.set((event.offsetX / state.size.width) * 2 - 1, -(event.offsetY / state.size.height) * 2 + 1);
+              state.raycaster.setFromCamera(toSourcePointer(state.pointer), state.camera);
+            },
+          })}
           frameloop="demand"
           dpr={[1, 2]}
           onPointerMissed={() => {
@@ -539,7 +577,7 @@ export function App() {
               if (controlName) lookCloser(character, controlName);
             }}
             isFrontView={isFrontView}
-            isShowingHandles={mode === 'pose' && !isCleanView && !selected?.isLocked}
+            isShowingHandles={mode === 'pose' && !isCleanView && !selected?.isLocked && !selected?.isHidden}
             touchTarget={touchTarget}
             isPicking={touchPick !== null}
             onPick={finishTouchPick}
@@ -563,6 +601,7 @@ export function App() {
             exportRequest={exportRequest}
             sceneVersion={sceneVersion}
             lensMm={lensMm}
+            isFisheye={isFisheye}
             cameraJump={cameraJump}
             onCameraJumped={() => setCameraJump(null)}
             onCameraChange={(view) => (cameraView.current = view)}
@@ -664,6 +703,8 @@ export function App() {
         onSelectProp={setSelectedPropId}
         onSelectObject={selectObject}
         onRemoveObject={removeObject}
+        onToggleHidden={toggleHidden}
+        onFocusObject={focusObject}
         onShowLight={(id) => {
           const light = lights.find((entry) => entry.id === id);
           if (light) frame([...characters.flatMap((character) => bonePoints(character)), new Vector3(...light.position)]);
@@ -687,6 +728,11 @@ export function App() {
         onFoldCard={setIsCardFolded}
         views={views}
         lensMm={lensMm}
+        isFisheye={isFisheye}
+        onToggleFisheye={() => {
+          setIsFrontView(false);
+          setIsFisheye(!isFisheye);
+        }}
         onChangeLens={(next) => {
           setIsFrontView(false);
           setLensMm(next);
@@ -760,6 +806,7 @@ interface StageProps {
   exportRequest: ExportRequest | null;
   sceneVersion: number;
   lensMm: number;
+  isFisheye: boolean;
   cameraJump: CameraView | null;
   onCameraJumped: () => void;
   onCameraChange: (view: CameraView) => void;
@@ -804,9 +851,56 @@ function Stage(props: StageProps) {
     return current instanceof ThreePerspectiveCamera && orbit ? { camera: current, controls: orbit } : null;
   };
   const lastLensMm = useRef(props.lensMm);
+  const wasFisheye = useRef(props.isFisheye);
 
   // Mannequin and light targets move their three.js objects directly, which "demand" drawing doesn't notice.
   useEffect(() => invalidate());
+
+  updateFisheyeView(props.isFisheye && !isFrontView, viewportWidth / Math.max(1, viewportHeight), -(coveredRight - coveredLeft) / Math.max(1, viewportWidth));
+  const composer = useMemo(() => {
+    const effects = new EffectComposer(renderer);
+    // Cleared to see-through, so the shader knows where nothing was drawn.
+    effects.addPass(new RenderPass(threeScene, camera, undefined, new Color(0x000000), 0));
+    effects.addPass(new ShaderPass(FISHEYE_SHADER));
+    return effects;
+  }, [renderer, threeScene, camera]);
+  useEffect(() => () => composer.dispose(), [composer]);
+  useEffect(() => {
+    composer.setPixelRatio(renderer.getPixelRatio());
+    composer.setSize(viewportWidth, viewportHeight);
+  }, [composer, viewportWidth, viewportHeight]);
+
+  // This takes over drawing: plain, or through the fisheye bend.
+  useFrame(() => {
+    if (!fisheyeView.isOn) return renderer.render(threeScene, camera);
+    const uniforms = (composer.passes[1] as ShaderPass).uniforms;
+    uniforms.aspect.value = fisheyeView.aspect;
+    uniforms.centerX.value = fisheyeView.centerX;
+    uniforms.halfDiagonal.value = fisheyeView.halfDiagonal;
+    uniforms.sourceHalfTangent.value = fisheyeView.sourceHalfTangent;
+    // Color.set() turns a hex color into linear light; the shader mixes in screen colors.
+    uniforms.background.value.set(background).convertLinearToSRGB();
+    uniforms.isTransparent.value = false;
+    // The shader lays the picture over the background color itself (see fisheyeView.ts).
+    const savedBackground = threeScene.background;
+    threeScene.background = null;
+    composer.render();
+    threeScene.background = savedBackground;
+  }, 1);
+
+  // Switching the fisheye on moves the camera in as if to a wide lens that keeps the middle the same size, and back out.
+  useEffect(() => {
+    const wasOn = wasFisheye.current;
+    wasFisheye.current = props.isFisheye;
+    const live = liveCamera();
+    if (wasOn === props.isFisheye || props.cameraJump || !live) return;
+    const fisheyeLensMm = fisheyeEquivalentLensMm(fisheyeView.halfDiagonal);
+    const offset = live.camera.position.clone().sub(live.controls.target);
+    const distance = props.isFisheye ? distanceForLens(offset.length(), props.lensMm, fisheyeLensMm) : distanceForLens(offset.length(), fisheyeLensMm, props.lensMm);
+    live.camera.position.copy(live.controls.target).addScaledVector(offset.normalize(), distance);
+    live.controls.update();
+    reportCamera();
+  }, [props.isFisheye]);
 
   // The picture slides sideways so the middle of the view is the middle of the stage the rail and card leave free.
   useEffect(() => {
@@ -821,7 +915,7 @@ function Stage(props: StageProps) {
     const live = liveCamera();
     if (isFrontView || !live) return;
     const round = (vector: Vector3) => vector.toArray().map((value) => Math.round(value * 1000) / 1000) as Vec3;
-    props.onCameraChange({ position: round(live.camera.position), target: round(live.controls.target), lensMm: props.lensMm });
+    props.onCameraChange({ position: round(live.camera.position), target: round(live.controls.target), lensMm: props.lensMm, ...(props.isFisheye && { fisheye: true }) });
   };
 
   // A new lens moves the camera closer or further along its line of sight, so the characters keep their size and only the perspective changes.
@@ -861,10 +955,24 @@ function Stage(props: StageProps) {
     const savedBackground = threeScene.background;
     if (exportRequest.isTransparent) threeScene.background = null;
     renderer.setPixelRatio(pixelRatio);
-    renderer.render(threeScene, camera);
-    const url = renderer.domElement.toDataURL('image/png');
+    let url: string;
+    if (fisheyeView.isOn) {
+      composer.setPixelRatio(pixelRatio);
+      composer.setSize(size.x, size.y);
+      threeScene.background = null;
+      const uniforms = (composer.passes[1] as ShaderPass).uniforms;
+      uniforms.isTransparent.value = exportRequest.isTransparent;
+      composer.render();
+      uniforms.isTransparent.value = false;
+      url = renderer.domElement.toDataURL('image/png');
+    } else {
+      renderer.render(threeScene, camera);
+      url = renderer.domElement.toDataURL('image/png');
+    }
     threeScene.background = savedBackground;
     renderer.setPixelRatio(screenPixelRatio);
+    composer.setPixelRatio(screenPixelRatio);
+    composer.setSize(size.x, size.y);
     console.log(`Saved PNG ${Math.round(size.x * pixelRatio)}×${Math.round(size.y * pixelRatio)}`);
 
     const link = document.createElement('a');
@@ -886,7 +994,7 @@ function Stage(props: StageProps) {
       {isFrontView ? (
         <OrthographicCamera makeDefault position={[focusX, focusHeight / 2, 10]} zoom={viewportHeight / (focusHeight * 1.25)} />
       ) : (
-        <PerspectiveCamera key={props.sceneVersion} makeDefault position={[0.6, 1.5, startDistance]} fov={fieldOfViewDegrees(props.lensMm)} />
+        <PerspectiveCamera key={props.sceneVersion} makeDefault position={[0.6, 1.5, startDistance]} fov={fisheyeView.isOn ? sourceFieldOfViewDegrees() : fieldOfViewDegrees(props.lensMm)} />
       )}
       <OrbitControls key={isFrontView ? `front-${focusX}` : `free-${props.sceneVersion}`} target={[isFrontView ? focusX : 0, isFrontView ? focusHeight / 2 : 1, 0]} enableRotate={!isFrontView} mouseButtons={{ LEFT: MOUSE.ROTATE, MIDDLE: MOUSE.ROTATE, RIGHT: MOUSE.PAN }} zoomToCursor makeDefault onChange={reportCamera} />
 
@@ -908,7 +1016,7 @@ function Stage(props: StageProps) {
           <mesh key={centimeters} position={[0.03, centimeters / 100, 0]}>
             <boxGeometry args={[centimeters % 50 === 0 ? 0.08 : 0.04, 0.004, 0.004]} />
             <meshBasicMaterial color="#6b7085" />
-            {centimeters % 50 === 0 && (
+            {centimeters % 50 === 0 && !fisheyeView.isOn && (
               <Html position={[0.08, 0, 0]} center={false} className="ruler-label" zIndexRange={[1, 0]}>
                 {centimeters} cm
               </Html>
@@ -918,7 +1026,7 @@ function Stage(props: StageProps) {
       </group>
 
       {characters.map((character) => (
-        <group key={character.id}>
+        <group key={character.id} visible={!character.isHidden}>
           <Mannequin
             characterId={character.id}
             targetBone={props.touchTarget?.characterId === character.id ? props.touchTarget.bone : null}
@@ -926,7 +1034,7 @@ function Stage(props: StageProps) {
               pin.startsWith('hand') ? [`wrist_${pin.slice(-1)}`, ...['thumb', 'index', 'middle', 'ring', 'pinky'].flatMap((finger) => [1, 2, 3].map((joint) => `${finger}_${joint}_${pin.slice(-1)}`))] : [`ankle_${pin.slice(-1)}`, `toes_${pin.slice(-1)}`],
             )}
             isPencilOnly={props.isPencilOnly}
-            isLocked={character.isLocked === true}
+            isLocked={character.isLocked === true || character.isHidden === true}
             isPicking={props.isPicking}
             onPick={(object, point) => props.onPick(character.id, object, point)}
             profile={character.profile}
@@ -951,7 +1059,7 @@ function Stage(props: StageProps) {
             />
           )}
           {character.reference && <ReferenceImage character={character} isVisible={!isExporting} />}
-          {character.id === selected?.id && !props.isCleanView && (
+          {character.id === selected?.id && !props.isCleanView && !fisheyeView.isOn && (
             <Html position={[character.pose.position?.[0] ?? 0, character.profile.heightCm / 100 + 0.12, character.pose.position?.[2] ?? 0]} center className="name-label" zIndexRange={[1, 0]}>
               {character.profile.name} · {character.profile.heightCm} cm
             </Html>

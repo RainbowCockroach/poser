@@ -10,6 +10,7 @@ import { Plane, Raycaster, Vector2, Vector3 } from 'three';
 import type { ThreeEvent } from '@react-three/fiber';
 import { propBoxes, type SceneProp } from '../core/props';
 import type { Vec3 } from '../core/rig';
+import { toSourcePointer } from './fisheyeView';
 // #endregion
 
 // #region Types and config
@@ -17,6 +18,7 @@ export interface PropEntry extends SceneProp {
   id: string;
   // Locked props ignore the pointer, so they can't be picked or dragged by accident.
   isLocked?: boolean;
+  isHidden?: boolean;
 }
 
 interface PropMeshesProps {
@@ -60,7 +62,7 @@ export function PropMeshes({ props, selectedPropId, isExporting, onSelect, onMov
       isDragging = true;
       const bounds = canvas.getBoundingClientRect();
       const normalized = new Vector2(((moveEvent.clientX - bounds.left) / bounds.width) * 2 - 1, -((moveEvent.clientY - bounds.top) / bounds.height) * 2 + 1);
-      raycaster.setFromCamera(normalized, camera);
+      raycaster.setFromCamera(toSourcePointer(normalized), camera);
       const hit = raycaster.ray.intersectPlane(plane, new Vector3());
       if (!hit) return;
       const position = startPosition.clone().add(hit.sub(grabbed).setY(0));
@@ -83,7 +85,7 @@ export function PropMeshes({ props, selectedPropId, isExporting, onSelect, onMov
 
   return (
     <>
-      {props.map((prop) => {
+      {props.filter((prop) => !prop.isHidden).map((prop) => {
         const isSelected = prop.id === selectedPropId && !isExporting;
         return (
           <group key={prop.id} onPointerDown={(event) => startDrag(prop, event)}>

@@ -14,7 +14,7 @@ import { forwardKinematics, solvePose, type Pose } from '../core/pose.ts';
 import type { SceneLight } from '../core/lights.ts';
 import type { Rig } from '../core/rig.ts';
 import { propBoxes, type SceneProp } from '../core/props.ts';
-import { fieldOfViewDegrees, type CameraView } from '../core/camera.ts';
+import { fieldOfViewDegrees, fisheyeEquivalentLensMm, fisheyeRay, type CameraView } from '../core/camera.ts';
 // #endregion
 
 // #region Types and config
@@ -38,6 +38,8 @@ export interface RenderOptions {
   focus?: { character: number; bones: string[] };
   // A lens for the framed views; ignored when `camera` is given.
   lensMm?: number;
+  // A fisheye picture (also taken from `camera.fisheye`).
+  fisheye?: boolean;
   // An exact camera (a view saved in the app); replaces `view` and the framing.
   camera?: CameraView;
 }
@@ -124,7 +126,10 @@ export function renderScene(scene: RenderScene, options: RenderOptions): { width
   if (!focus) box.min.y = 0;
   const target = box.min.clone().add(box.max).multiplyScalar(0.5);
   const aspect = options.width / options.height;
-  const lensMm = options.camera?.lensMm ?? options.lensMm;
+  const isFisheye = options.fisheye === true || options.camera?.fisheye === true;
+  const halfDiagonal = Math.hypot(aspect, 1);
+  // A fisheye frames like the normal lens that shows the middle at the same size.
+  const lensMm = isFisheye ? fisheyeEquivalentLensMm(halfDiagonal) : (options.camera?.lensMm ?? options.lensMm);
   const verticalHalf = ((lensMm ? fieldOfViewDegrees(lensMm) : FIELD_OF_VIEW_DEGREES) * Math.PI) / 360;
   const viewDirection = options.camera ? new Vector3(...options.camera.position).sub(new Vector3(...options.camera.target)).normalize() : new Vector3(...VIEWS[options.view]).normalize();
   const forward = viewDirection.clone().negate();
@@ -154,7 +159,12 @@ export function renderScene(scene: RenderScene, options: RenderOptions): { width
     for (let column = 0; column < width; column++) {
       const screenX = ((column + 0.5) / width) * 2 - 1;
       const screenY = 1 - ((row + 0.5) / height) * 2;
-      direction.copy(forward).addScaledVector(right, screenX * halfHeight * aspect).addScaledVector(up, screenY * halfHeight).normalize();
+      if (isFisheye) {
+        const [planeX, planeY] = fisheyeRay(screenX * aspect, screenY, halfDiagonal);
+        direction.copy(forward).addScaledVector(right, planeX).addScaledVector(up, planeY).normalize();
+      } else {
+        direction.copy(forward).addScaledVector(right, screenX * halfHeight * aspect).addScaledVector(up, screenY * halfHeight).normalize();
+      }
       const pixel = (row * width + column) * 4;
       const hit = castRay(groups, eye, direction, Infinity, false);
       const floorDistance = direction.y < 0 ? -eye.y / direction.y : Infinity;

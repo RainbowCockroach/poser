@@ -37,6 +37,10 @@ npm run poser -- help   # CLI for agents: render, touch, check, pose (see AGENTS
   unlocked or removed there. Remove the selected object with Delete or its card; undo brings it back.
 - Lights: click a light's ball on the stage, or its row, and drag the ball to move it; "Show on stage" brings an
   off-screen light into view.
+- The eye in the objects list hides an object (a hidden light is off). Focus (card button, F, or double-click a row)
+  brings the selected object to the middle of the view.
+- Camera: "Fisheye" bends the picture like a fisheye lens (strongest up close); saved images and CLI renders
+  (`render --fisheye`, `camera --fisheye`) keep it.
 - Touch: put a hand on a knee or a foot (the body bends over if it has to), a chest on someone's back; "Fix overlaps" pulls limbs out of bodies.
 - Props: chair, stool, box, step, wall and table; drag them around, sit or stand on them.
 - Camera: pick a lens (wide 24 mm to portrait 85 mm; the characters keep their size) and save views to come back to.

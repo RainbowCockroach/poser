@@ -28,9 +28,9 @@ import { encodePng } from './png.ts';
 // #region Types and config
 interface SceneFile {
   format: 'poser.scene/1';
-  characters: { profile: CharacterProfile; pose: Pose; locked?: boolean }[];
-  props?: SceneProp[];
-  lights?: SceneLight[];
+  characters: { profile: CharacterProfile; pose: Pose; locked?: boolean; hidden?: boolean }[];
+  props?: (SceneProp & { hidden?: boolean })[];
+  lights?: (SceneLight & { hidden?: boolean })[];
   background?: string;
   camera?: CameraView;
   views?: CameraView[];
@@ -73,6 +73,7 @@ const ARGUMENT_HELP: Record<string, string> = {
   width: 'image width in pixels (default 1200)',
   height: 'image height in pixels (default 900)',
   transparent: 'true for a transparent background',
+  fisheye: 'true for a fisheye picture (straight lines bow outward, 150° across the corners)',
   site: 'the Poser site the link opens (default: the GitHub Pages site)',
   focus: 'render a close-up of one body part (e.g. hand_l, head, foot_r) of --character (default the first)',
   shape: `hand shape: ${Object.keys(HAND_SHAPES).join(', ')}`,
@@ -90,7 +91,7 @@ const COMMANDS: Record<string, Command> = {
   render: {
     summary: 'Render the scene to a PNG.',
     positional: ['scene'],
-    options: { view: 'string', lens: 'number', width: 'number', height: 'number', out: 'string', transparent: 'boolean', focus: 'string', character: 'string' },
+    options: { view: 'string', lens: 'number', fisheye: 'boolean', width: 'number', height: 'number', out: 'string', transparent: 'boolean', focus: 'string', character: 'string' },
     run: (args) => {
       const scene = readScene(args);
       const viewName = typeof args.view === 'string' ? args.view : scene.camera ? 'camera' : 'three-quarter';
@@ -118,18 +119,22 @@ const COMMANDS: Record<string, Command> = {
           (args.focus === `hand_${side}` && new RegExp(`^(thumb|index|middle|ring|pinky)_\\d_${side}$`).test(bone)) ||
           (args.focus === `foot_${side}` && bone === `toes_${side}`) ||
           (args.focus === 'head' && bone === 'neck');
-        focus = { character, bones: rigs[character].bones.map((bone) => bone.name).filter(belongs) };
+        if (scene.characters[character].hidden) throw new Error(`${scene.characters[character].profile.name} is hidden in this scene; show it in the app first`);
+        // Hidden characters aren't drawn, so the focused one's place among the drawn ones counts.
+        const drawnIndex = scene.characters.slice(0, character).filter((entry) => !entry.hidden).length;
+        focus = { character: drawnIndex, bones: rigs[character].bones.map((bone) => bone.name).filter(belongs) };
       }
 
       const started = performance.now();
       const image = renderScene(
         {
-          characters: scene.characters.map((entry, index) => ({ rig: rigs[index], pose: entry.pose })),
-          props: scene.props,
-          lights: scene.lights ?? DEFAULT_LIGHTS,
+          // Hidden objects (the app's eye in the objects list) aren't drawn; a hidden light is off.
+          characters: scene.characters.flatMap((entry, index) => (entry.hidden ? [] : [{ rig: rigs[index], pose: entry.pose }])),
+          props: scene.props?.filter((prop) => !prop.hidden),
+          lights: (scene.lights ?? DEFAULT_LIGHTS).filter((light) => !('hidden' in light && light.hidden)),
           background: scene.background ?? DEFAULT_BACKGROUND,
         },
-        { width, height, view, focus, lensMm, camera: isPreset || focus ? undefined : { ...savedView!, lensMm: lensMm ?? savedView!.lensMm }, isTransparent: args.transparent === true || args.transparent === 'true' },
+        { width, height, view, focus, lensMm, fisheye: args.fisheye === true || args.fisheye === 'true', camera: isPreset || focus ? undefined : { ...savedView!, lensMm: lensMm ?? savedView!.lensMm }, isTransparent: args.transparent === true || args.transparent === 'true' },
       );
       const png = encodePng(image.width, image.height, image.rgba);
       const name = (focus ? `${viewName}.${args.focus}` : viewName).replace(/[^a-z0-9.-]+/gi, '-');
@@ -285,7 +290,7 @@ const COMMANDS: Record<string, Command> = {
   camera: {
     summary: 'Set the scene camera (what "render" and the app open with); --name also keeps it as a named view. Edits the scene file.',
     positional: ['scene'],
-    options: { position: 'string', look_at: 'string', lens: 'number', name: 'string', out: 'string' },
+    options: { position: 'string', look_at: 'string', lens: 'number', fisheye: 'boolean', name: 'string', out: 'string' },
     run: (args) => {
       const scene = readScene(args);
       const point = (value: unknown, label: string) => {
@@ -297,12 +302,13 @@ const COMMANDS: Record<string, Command> = {
       if (!position) throw new Error('This scene has no camera yet; give --position x,y,z');
       const middle = scene.characters.length === 0 ? 0 : scene.characters.reduce((sum, entry) => sum + (entry.pose.position?.[0] ?? 0), 0) / scene.characters.length;
       const target = args.look_at === undefined ? (scene.camera?.target ?? [middle, 1, 0]) : point(args.look_at, 'look_at');
-      const view = normalizeView({ position, target, lensMm: args.lens === undefined ? scene.camera?.lensMm : Number(args.lens), name: typeof args.name === 'string' ? args.name : undefined });
+      const fisheye = args.fisheye === undefined ? scene.camera?.fisheye : args.fisheye === true || args.fisheye === 'true';
+      const view = normalizeView({ position, target, lensMm: args.lens === undefined ? scene.camera?.lensMm : Number(args.lens), fisheye, name: typeof args.name === 'string' ? args.name : undefined });
       if (!view) throw new Error('The camera position and the point it looks at must be apart');
       const { name, ...camera } = view;
       scene.camera = camera;
       if (name) scene.views = [...(scene.views ?? []).filter((entry) => entry.name !== name), view];
-      return { text: `Camera at ${camera.position.join(', ')} looking at ${camera.target.join(', ')}, ${Math.round(camera.lensMm)} mm${name ? `, kept as "${name}"` : ''}. Wrote ${writeScene(scene, args)}` };
+      return { text: `Camera at ${camera.position.join(', ')} looking at ${camera.target.join(', ')}, ${camera.fisheye ? 'fisheye' : `${Math.round(camera.lensMm)} mm`}${name ? `, kept as "${name}"` : ''}. Wrote ${writeScene(scene, args)}` };
     },
   },
 

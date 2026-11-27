@@ -20,7 +20,7 @@ const POINTER_ROWS: { action: string; mouse: string; touch: string }[] = [
 
 const KEY_ROWS: { keys: string[]; action: string }[] = [
   { keys: ['Ctrl/⌘ Z'], action: 'Undo (add Shift to redo)' },
-  { keys: ['F'], action: 'Look closer at the selected part or character (Shift F: see everyone)' },
+  { keys: ['F'], action: 'Focus: bring the selected part, character, prop or light to the middle (Shift F: see everyone)' },
   { keys: ['1', '2', '3', '4'], action: 'See the character from its front, side, back, three-quarter' },
   { keys: ['R'], action: 'Reset the selected part (Shift R: the whole pose)' },
   { keys: ['M'], action: 'Copy the arm or leg of the selected part onto the other side' },

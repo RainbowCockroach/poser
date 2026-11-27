@@ -124,6 +124,14 @@ no wheel or middle button), so extra buttons and keys are only faster ways.
     their own card). Props and lights can be locked like characters, and locks are saved in scenes. Light markers can be
     clicked and dragged (they slide at their height and keep their aim); new lamps and spots appear in view near the
     selected character. On phones the list is a strip along the bottom.
+18. ✅ Fisheye, hide, focus. Fisheye is an equidistant projection reaching 75° in the picture's corners
+    (`fisheyeRay` in core/camera.ts). The app draws with a very wide normal camera and bends the picture in a screen
+    shader that also finishes the colors (ACES, sRGB) over the plain background; every pointer-to-ray conversion
+    goes through the same bend (`src/app/fisheyeView.ts`), so posing works through it. Switching it on moves the
+    camera in to the normal lens that shows the middle at the same size. The CLI traces fisheye rays directly. The
+    objects list has an eye per object (hidden: not drawn, not clickable, not a seat to land on, a light is off;
+    saved as `hidden`). Focus (card button, F, double-click a row) frames the selected character or part, prop, or a
+    light with the spot it shines at.
 
 ## Sources
 

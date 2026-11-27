@@ -20,6 +20,7 @@ import { buildRig, type Vec3 } from '../core/rig';
 import { forwardKinematics, solvePose, type Pose } from '../core/pose';
 import { dragMotions, holdPins, reach, type Pin } from '../core/reach';
 import type { SceneCharacter } from './App';
+import { toSourcePointer } from './fisheyeView';
 // #endregion
 
 // #region Config
@@ -121,7 +122,7 @@ export function useDragPosing({ onPose, onLongPress, onTouchTarget, onTouchDrop 
       if (!pointer) return;
       const bounds = canvas.getBoundingClientRect();
       const normalized = new Vector2(((pointer.x - bounds.left) / bounds.width) * 2 - 1, -((pointer.y - bounds.top) / bounds.height) * 2 + 1);
-      raycaster.setFromCamera(normalized, camera);
+      raycaster.setFromCamera(toSourcePointer(normalized), camera);
       const hit = raycaster.ray.intersectPlane(plane, new Vector3());
       if (!hit) return;
 
