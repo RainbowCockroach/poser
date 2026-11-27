@@ -15,6 +15,9 @@ import notMad from '../../characters/not-mad.oc.json';
 // #endregion
 
 // #region Tests
+// Leaning solves the whole body from several starts, about a second per character; CI runners are slower.
+const LEAN_TEST_TIMEOUT = 30_000;
+
 describe('body contact', () => {
   const samples = [potat, bush, seana, notMad].map((profile) => ({ name: profile.name, rig: buildRig(profile as CharacterProfile), pose: {} }));
   const one = (character: PosedCharacter, pose = character.pose) => [{ ...character, pose }];
@@ -70,11 +73,11 @@ describe('body contact', () => {
       const after = forwardKinematics(character.rig, solvePose(result.pose));
       for (const bone of ['ankle_l', 'ankle_r']) expect(after[bone].position.distanceTo(before[bone].position), `${character.name} ${bone}`).toBeLessThan(0.02);
     }
-  });
+  }, LEAN_TEST_TIMEOUT);
 
   it('gets a standing hand to the own knee', () => {
     for (const character of samples) expect(Math.abs(touch(one(character), 0, 'hand_r', 0, 'knee_r').gapMeters), character.name).toBeLessThan(0.02);
-  });
+  }, LEAN_TEST_TIMEOUT);
 
   it('says which body part names exist when given a wrong one', () => {
     expect(() => touch(one(samples[0]), 0, 'paw_l', 0, 'head')).toThrow(/hand_l/);
