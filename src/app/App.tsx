@@ -884,6 +884,7 @@ function Stage(props: StageProps) {
     return () => {
       window.removeEventListener('pointermove', markMotion);
       window.removeEventListener('wheel', markMotion);
+      clearTimeout(settleTimer.current);
     };
   }, []);
 
@@ -950,6 +951,8 @@ function Stage(props: StageProps) {
   }, [camera, viewportWidth, viewportHeight, coveredLeft, coveredRight]);
 
   const reportCamera = () => {
+    // The camera also drifts on its own for a moment after a flick; that counts as moving for the fisheye too.
+    lastMotion.current = performance.now();
     const live = liveCamera();
     if (isFrontView || !live) return;
     const round = (vector: Vector3) => vector.toArray().map((value) => Math.round(value * 1000) / 1000) as Vec3;
