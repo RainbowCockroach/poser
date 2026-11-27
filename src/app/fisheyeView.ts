@@ -26,6 +26,10 @@ export const fisheyeView = {
   sourceHalfTangent: 1,
 };
 
+// Pixels of the sharp still frame's wide picture: about 96 MB of graphics memory on a computer, 40 MB on a phone.
+const SHARP_PIXELS = 12_000_000;
+const SHARP_PIXELS_ON_PHONES = 5_000_000;
+
 export const FISHEYE_SHADER = {
   uniforms: {
     tDiffuse: { value: null },
@@ -94,6 +98,18 @@ export function updateFisheyeView(isOn: boolean, aspect: number, centerX: number
   // The farthest corner from the middle of the view sees the full fisheye angle.
   fisheyeView.halfDiagonal = Math.hypot(aspect * (1 + Math.abs(centerX)), 1);
   fisheyeView.sourceHalfTangent = Math.tan((FISHEYE_HALF_DIAGONAL_DEGREES * Math.PI) / 180) / fisheyeView.halfDiagonal;
+}
+
+// The bend stretches the middle of the wide picture by tan(75°) / 75° ≈ 2.85, so drawn at screen size the middle goes
+// soft. A still frame draws the wide picture that much sharper, as far as a memory budget (smaller on phones) and
+// the graphics card's largest image allow; frames while moving stay at screen size.
+export function sourceSharpnessScale(screenWidthPixels: number, screenHeightPixels: number, maxTextureSize: number): number {
+  const maxAngle = (FISHEYE_HALF_DIAGONAL_DEGREES * Math.PI) / 180;
+  const stretch = Math.tan(maxAngle) / maxAngle;
+  const budget = matchMedia('(pointer: coarse)').matches ? SHARP_PIXELS_ON_PHONES : SHARP_PIXELS;
+  const byBudget = Math.sqrt(budget / Math.max(1, screenWidthPixels * screenHeightPixels));
+  const byCard = maxTextureSize / Math.max(1, screenWidthPixels, screenHeightPixels);
+  return Math.max(1, Math.min(stretch, byBudget, byCard));
 }
 
 // The vertical angle of view the wide camera needs so its corners reach the fisheye's corners.

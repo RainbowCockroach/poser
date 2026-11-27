@@ -128,7 +128,10 @@ no wheel or middle button), so extra buttons and keys are only faster ways.
     (`fisheyeRay` in core/camera.ts). The app draws with a very wide normal camera and bends the picture in a screen
     shader that also finishes the colors (ACES, sRGB) over the plain background; every pointer-to-ray conversion
     goes through the same bend (`src/app/fisheyeView.ts`), so posing works through it. Switching it on moves the
-    camera in to the normal lens that shows the middle at the same size. The CLI traces fisheye rays directly. The
+    camera in to the normal lens that shows the middle at the same size. The bend stretches the middle of the wide
+    picture about 2.85×, so a still frame draws it that much sharper (budget 12 M pixels, 5 M on phones, within the
+    card's largest image); while the camera or a drag moves it draws at screen size and one sharp frame follows
+    220 ms after. A cube map (six renders, drei's Fisheye) would only be needed to see behind the camera. The CLI traces fisheye rays directly. The
     objects list has an eye per object (hidden: not drawn, not clickable, not a seat to land on, a light is off;
     saved as `hidden`). Focus (card button, F, double-click a row) frames the selected character or part, prop, or a
     light with the spot it shines at.

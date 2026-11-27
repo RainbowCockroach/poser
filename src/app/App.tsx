@@ -10,12 +10,10 @@
 // #region Setup
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, events as pointerEvents, useFrame, useThree } from '@react-three/fiber';
-import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
-import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
-import { FISHEYE_SHADER, fisheyeView, sourceFieldOfViewDegrees, toSourcePointer, updateFisheyeView } from './fisheyeView';
+import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
+import { FISHEYE_SHADER, fisheyeView, sourceFieldOfViewDegrees, sourceSharpnessScale, toSourcePointer, updateFisheyeView } from './fisheyeView';
 import { Grid, Html, OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei';
-import { Box3, Color, MOUSE, PerspectiveCamera as ThreePerspectiveCamera, SRGBColorSpace, TextureLoader, Vector2, Vector3, type Texture } from 'three';
+import { Box3, HalfFloatType, MOUSE, ShaderMaterial, UniformsUtils, WebGLRenderTarget, PerspectiveCamera as ThreePerspectiveCamera, SRGBColorSpace, TextureLoader, Vector2, Vector3, type Texture } from 'three';
 import { Mannequin } from './Mannequin';
 import { Panel, type Mode, type ViewName } from './Panel';
 import type { ObjectRef } from './Outliner';
@@ -100,6 +98,8 @@ const THREE_QUARTER_DEGREES = 35;
 const PENCIL_ONLY_STORAGE_KEY = 'poser.pencilOnly';
 // The click a lifted finger makes arrives within this long after it lifts.
 const MENU_SETTLE_MILLISECONDS = 350;
+// The fisheye draws a cheap frame while the camera or a drag moves, and a sharp one this long after it stops.
+const FISHEYE_SETTLE_MILLISECONDS = 220;
 // About the part menu's height with every item, so it opens upward near the bottom of the window.
 const PART_MENU_HEIGHT_PIXELS = 440;
 // The body part a selected control stands for when it is asked to touch something.
@@ -857,35 +857,73 @@ function Stage(props: StageProps) {
   useEffect(() => invalidate());
 
   updateFisheyeView(props.isFisheye && !isFrontView, viewportWidth / Math.max(1, viewportHeight), -(coveredRight - coveredLeft) / Math.max(1, viewportWidth));
-  const composer = useMemo(() => {
-    const effects = new EffectComposer(renderer);
-    // Cleared to see-through, so the shader knows where nothing was drawn.
-    effects.addPass(new RenderPass(threeScene, camera, undefined, new Color(0x000000), 0));
-    effects.addPass(new ShaderPass(FISHEYE_SHADER));
-    return effects;
-  }, [renderer, threeScene, camera]);
-  useEffect(() => () => composer.dispose(), [composer]);
+  // The wide picture is drawn into its own image, then bent onto the screen by the shader. While things move it is
+  // drawn at screen size (as cheap as without the fisheye); once they settle, one sharper frame replaces it.
+  // Each size has its own image so switching between them doesn't reallocate graphics memory.
+  const fisheye = useMemo(() => {
+    const material = new ShaderMaterial({ ...FISHEYE_SHADER, uniforms: UniformsUtils.clone(FISHEYE_SHADER.uniforms) });
+    return { moving: new WebGLRenderTarget(1, 1, { type: HalfFloatType }), sharp: new WebGLRenderTarget(1, 1, { type: HalfFloatType }), material, quad: new FullScreenQuad(material) };
+  }, []);
+  useEffect(
+    () => () => {
+      fisheye.moving.dispose();
+      fisheye.sharp.dispose();
+      fisheye.material.dispose();
+      fisheye.quad.dispose();
+    },
+    [fisheye],
+  );
+  const lastMotion = useRef(0);
+  const settleTimer = useRef(0);
   useEffect(() => {
-    composer.setPixelRatio(renderer.getPixelRatio());
-    composer.setSize(viewportWidth, viewportHeight);
-  }, [composer, viewportWidth, viewportHeight]);
+    const markMotion = (event: Event) => {
+      if (event.type === 'wheel' || (event as PointerEvent).buttons) lastMotion.current = performance.now();
+    };
+    window.addEventListener('pointermove', markMotion, { passive: true });
+    window.addEventListener('wheel', markMotion, { passive: true });
+    return () => {
+      window.removeEventListener('pointermove', markMotion);
+      window.removeEventListener('wheel', markMotion);
+    };
+  }, []);
 
-  // This takes over drawing: plain, or through the fisheye bend.
-  useFrame(() => {
-    if (!fisheyeView.isOn) return renderer.render(threeScene, camera);
-    const uniforms = (composer.passes[1] as ShaderPass).uniforms;
+  const drawFisheye = (pixelRatio: number, isTransparent: boolean, isMoving: boolean) => {
+    const scale = pixelRatio * (isMoving ? 1 : sourceSharpnessScale(viewportWidth * pixelRatio, viewportHeight * pixelRatio, renderer.capabilities.maxTextureSize));
+    const target = isMoving ? fisheye.moving : fisheye.sharp;
+    target.setSize(Math.round(viewportWidth * scale), Math.round(viewportHeight * scale));
+    const uniforms = fisheye.material.uniforms;
+    uniforms.tDiffuse.value = target.texture;
     uniforms.aspect.value = fisheyeView.aspect;
     uniforms.centerX.value = fisheyeView.centerX;
     uniforms.halfDiagonal.value = fisheyeView.halfDiagonal;
     uniforms.sourceHalfTangent.value = fisheyeView.sourceHalfTangent;
     // Color.set() turns a hex color into linear light; the shader mixes in screen colors.
     uniforms.background.value.set(background).convertLinearToSRGB();
-    uniforms.isTransparent.value = false;
-    // The shader lays the picture over the background color itself (see fisheyeView.ts).
+    uniforms.isTransparent.value = isTransparent;
+
+    // Drawn see-through, without the background, so the shader knows where nothing was drawn (see fisheyeView.ts).
     const savedBackground = threeScene.background;
+    const savedClearAlpha = renderer.getClearAlpha();
     threeScene.background = null;
-    composer.render();
+    renderer.setRenderTarget(target);
+    renderer.setClearAlpha(0);
+    renderer.clear();
+    renderer.render(threeScene, camera);
+    renderer.setRenderTarget(null);
+    renderer.setClearAlpha(savedClearAlpha);
     threeScene.background = savedBackground;
+    fisheye.quad.render(renderer);
+  };
+
+  // This takes over drawing: plain, or through the fisheye bend.
+  useFrame(() => {
+    if (!fisheyeView.isOn) return renderer.render(threeScene, camera);
+    const isMoving = performance.now() - lastMotion.current < FISHEYE_SETTLE_MILLISECONDS;
+    drawFisheye(renderer.getPixelRatio(), false, isMoving);
+    if (!isMoving) return;
+    // Drawing only happens on change, so ask for one more frame once things have settled: the sharp one.
+    clearTimeout(settleTimer.current);
+    settleTimer.current = window.setTimeout(invalidate, FISHEYE_SETTLE_MILLISECONDS);
   }, 1);
 
   // Switching the fisheye on moves the camera in as if to a wide lens that keeps the middle the same size, and back out.
@@ -957,13 +995,7 @@ function Stage(props: StageProps) {
     renderer.setPixelRatio(pixelRatio);
     let url: string;
     if (fisheyeView.isOn) {
-      composer.setPixelRatio(pixelRatio);
-      composer.setSize(size.x, size.y);
-      threeScene.background = null;
-      const uniforms = (composer.passes[1] as ShaderPass).uniforms;
-      uniforms.isTransparent.value = exportRequest.isTransparent;
-      composer.render();
-      uniforms.isTransparent.value = false;
+      drawFisheye(pixelRatio, exportRequest.isTransparent, false);
       url = renderer.domElement.toDataURL('image/png');
     } else {
       renderer.render(threeScene, camera);
@@ -971,8 +1003,6 @@ function Stage(props: StageProps) {
     }
     threeScene.background = savedBackground;
     renderer.setPixelRatio(screenPixelRatio);
-    composer.setPixelRatio(screenPixelRatio);
-    composer.setSize(size.x, size.y);
     console.log(`Saved PNG ${Math.round(size.x * pixelRatio)}×${Math.round(size.y * pixelRatio)}`);
 
     const link = document.createElement('a');
