@@ -1,5 +1,5 @@
 /*
- * Checks the headless renderer: a character shows up in the middle of the picture, and the PNG is valid.
+ * Checks the headless renderer: a character and a prop show up in the picture, and the PNG is valid.
  * Run: npm test
  */
 
@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { inflateSync } from 'node:zlib';
 import { buildRig, DEFAULT_PROFILE } from '../core/rig.ts';
 import { DEFAULT_LIGHTS } from '../core/lights.ts';
+import { newProp } from '../core/props.ts';
 import { encodePng, renderScene } from './render.ts';
 // #endregion
 
@@ -26,6 +27,14 @@ describe('render', () => {
   it('leaves the background see-through when asked', () => {
     const image = renderScene(scene, { width: 20, height: 30, view: 'front', supersample: 1, isTransparent: true });
     expect(image.rgba[3]).toBe(0);
+  });
+
+  it('draws a prop, framed in the picture, in its own color', () => {
+    const wall = { ...newProp('wall'), color: '#ff0000' };
+    const image = renderScene({ characters: [], props: [wall], lights: DEFAULT_LIGHTS, background: '#eef0f5' }, { width: 40, height: 30, view: 'front', supersample: 1 });
+    const [red, green, blue] = image.rgba.slice((15 * 40 + 20) * 4, (15 * 40 + 20) * 4 + 3);
+    expect(red).toBeGreaterThan(green + 80);
+    expect(red).toBeGreaterThan(blue + 80);
   });
 
   it('writes a PNG whose pixel data unpacks to the right size', () => {

@@ -21,6 +21,7 @@ npm run poser -- help   # CLI for agents: render, touch, check, pose (see AGENTS
 - Poses: presets in `poses/*.pose.json`, plus "My poses" saved in the browser and shareable as `.pose.json`.
 - Hands: one tap for a fist, point, peace sign, grip or pinch, on one hand or both.
 - Touch: put a hand on a knee or a foot (the body bends over if it has to), a chest on someone's back; "Fix overlaps" pulls limbs out of bodies.
+- Props: chair, stool, box, step, wall and table; drag them around, sit or stand on them.
 - Lights: presets or your own sun, spot, lamp and ambient lights with shadows; saved in the scene.
 - Save image: PNG of the current view, up to 4× sharper, optionally with a transparent background.
 - Agents: `node src/cli/poser.ts` renders scenes to PNG and edits them; also an MCP server (`.mcp.json`).

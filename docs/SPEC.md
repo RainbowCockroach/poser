@@ -67,8 +67,10 @@ values, see sources). Coupled motion:
 7. ✅ Whole-body reach: when an arm (or the head) and the back can't get there, `touch` leans the whole body:
    the pelvis tilts, the legs keep the feet where they stood and the hips shift back, so a standing character
    can put a hand on its own knee or foot. A free arm that was hanging keeps hanging toward the floor.
-8. Props: simple furniture (box, chair, stool, wall, step) to sit on, lean on or stand on; placed, moved
-   and turned like characters, saved in the scene, drawn by the CLI render, and "Drop to floor" lands on them.
+8. ✅ Props: chair, stool, box, step, wall and table, each a few boxes; added under the selected character
+   (a wall behind, a table in front), dragged over the floor or moved with sliders, sized and colored, saved in
+   the scene and share links, drawn by the CLI render (`prop` adds one). "Drop to floor" and pose presets land
+   on a prop top up to 25 cm above the body's lowest point, so a sitting pose settles onto the seat.
 9. Camera: lens choice (wide 24 mm to portrait 85 mm, since perspective matters for drawing) and saved
    views in the scene; the CLI renders from the saved view.
 

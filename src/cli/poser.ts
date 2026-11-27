@@ -18,6 +18,7 @@ import { DEFAULT_LIGHTS, normalizeLight, type SceneLight } from '../core/lights.
 import { BODY_PARTS, findOverlaps, separate, touch, type PosedCharacter, type TouchSide } from '../core/body.ts';
 import { MAX_SHARE_LINK_LENGTH } from '../core/share.ts';
 import { applyHandShape, HAND_SHAPES, type HandSide } from '../core/hands.ts';
+import { newProp, normalizeProp, PROP_KINDS, propBoxes, type PropKind, type SceneProp } from '../core/props.ts';
 import { encodePng, renderScene, VIEWS, type View } from './render.ts';
 // #endregion
 
@@ -25,6 +26,7 @@ import { encodePng, renderScene, VIEWS, type View } from './render.ts';
 interface SceneFile {
   format: 'poser.scene/1';
   characters: { profile: CharacterProfile; pose: Pose }[];
+  props?: SceneProp[];
   lights?: SceneLight[];
   background?: string;
 }
@@ -44,7 +46,7 @@ interface Command {
   run: (args: Arguments) => CommandResult;
 }
 
-const VERSION = '0.6.0';
+const VERSION = '0.7.0';
 const SITE_URL = 'https://rainbowcockroach.github.io/poser/';
 const DEFAULT_BACKGROUND = '#eef0f5';
 const POSES_FOLDER = new URL('../../poses/', import.meta.url);
@@ -66,6 +68,11 @@ const ARGUMENT_HELP: Record<string, string> = {
   focus: 'render a close-up of one body part (e.g. hand_l, head, foot_r) of --character (default the first)',
   shape: `hand shape: ${Object.keys(HAND_SHAPES).join(', ')}`,
   hand: 'which hand: l, r or both (default both)',
+  kind: `prop: ${Object.keys(PROP_KINDS).join(', ')}`,
+  x: 'left/right position on the floor in meters (default 0)',
+  z: 'back/front position on the floor in meters (default 0.8, in front of a character at the middle)',
+  turn: 'turn in degrees, positive toward the left (default 0: a chair\'s seat faces +Z)',
+  size: 'width,height,depth in meters (chair and stool: height is the seat); default depends on the kind',
 };
 // #endregion
 
@@ -102,6 +109,7 @@ const COMMANDS: Record<string, Command> = {
       const image = renderScene(
         {
           characters: scene.characters.map((entry, index) => ({ rig: rigs[index], pose: entry.pose })),
+          props: scene.props,
           lights: scene.lights ?? DEFAULT_LIGHTS,
           background: scene.background ?? DEFAULT_BACKGROUND,
         },
@@ -167,14 +175,15 @@ const COMMANDS: Record<string, Command> = {
   },
 
   drop: {
-    summary: 'Lift or lower characters so their lowest point stands on the floor. Edits the scene file.',
+    summary: 'Lift or lower characters so their lowest point stands on the floor, or on a prop top just under it. Edits the scene file.',
     positional: ['scene'],
     options: { character: 'string', out: 'string' },
     run: (args) => {
       const scene = readScene(args);
       const indexes = args.character === undefined ? scene.characters.map((_, index) => index) : [characterIndex(scene, args.character)];
-      for (const index of indexes) scene.characters[index].pose = dropToFloor(buildRig(scene.characters[index].profile), scene.characters[index].pose);
-      return { text: `Dropped ${indexes.length} character(s) to the floor. Wrote ${writeScene(scene, args)}` };
+      const boxes = (scene.props ?? []).flatMap(propBoxes);
+      for (const index of indexes) scene.characters[index].pose = dropToFloor(buildRig(scene.characters[index].profile), scene.characters[index].pose, boxes);
+      return { text: `Dropped ${indexes.length} character(s) to the floor (or onto props). Wrote ${writeScene(scene, args)}` };
     },
   },
 
@@ -201,7 +210,7 @@ const COMMANDS: Record<string, Command> = {
       const joints = structuredClone(file.joints);
       const turn = character.pose.joints?.pelvis?.turn;
       if (turn) joints.pelvis = { ...joints.pelvis, turn };
-      character.pose = dropToFloor(buildRig(character.profile), { ...character.pose, joints });
+      character.pose = dropToFloor(buildRig(character.profile), { ...character.pose, joints }, (scene.props ?? []).flatMap(propBoxes));
       return { text: `${character.profile.name}: ${file.name}. Wrote ${writeScene(scene, args)}` };
     },
   },
@@ -218,6 +227,22 @@ const COMMANDS: Record<string, Command> = {
       scene.characters[index].pose = applyHandShape(scene.characters[index].pose, side, String(args.shape));
       const which = side === 'both' ? 'both hands' : side === 'l' ? 'left hand' : 'right hand';
       return { text: `${scene.characters[index].profile.name}: ${HAND_SHAPES[String(args.shape)].label.toLowerCase()} on ${which}. Wrote ${writeScene(scene, args)}` };
+    },
+  },
+
+  prop: {
+    summary: 'Add a prop (chair, stool, box, step, wall, table) to the scene. Edits the scene file.',
+    positional: ['scene', 'kind'],
+    options: { x: 'number', z: 'number', turn: 'number', size: 'string', out: 'string' },
+    run: (args) => {
+      const scene = readScene(args);
+      const kind = String(args.kind) as PropKind;
+      if (!PROP_KINDS[kind]) throw new Error(`Unknown prop "${kind}". Known: ${Object.keys(PROP_KINDS).join(', ')}`);
+      const size = typeof args.size === 'string' ? args.size.split(',').map(Number) : undefined;
+      if (size && (size.length !== 3 || size.some((value) => !Number.isFinite(value)))) throw new Error('--size needs three numbers: width,height,depth');
+      const prop = normalizeProp({ ...newProp(kind, [Number(args.x ?? 0), 0, Number(args.z ?? 0.8)]), turn: Number(args.turn ?? 0), ...(size && { size: size as SceneProp['size'] }) });
+      scene.props = [...(scene.props ?? []), prop];
+      return { text: `Added ${PROP_KINDS[kind].label.toLowerCase()} at x ${prop.position[0]}, z ${prop.position[2]} (${prop.size.join(' × ')} m). Wrote ${writeScene(scene, args)}` };
     },
   },
 
@@ -339,6 +364,7 @@ function readScene(args: Arguments): SceneFile {
   return {
     ...data,
     characters: data.characters.map((entry: { profile?: Partial<CharacterProfile>; pose?: Pose }) => ({ ...entry, profile: normalizeProfile(entry.profile ?? {}), pose: entry.pose ?? {} })),
+    props: Array.isArray(data.props) ? data.props.filter((prop: unknown) => typeof prop === 'object' && prop).map(normalizeProp) : undefined,
     lights: Array.isArray(data.lights) ? data.lights.filter((light: unknown) => typeof light === 'object' && light).map(normalizeLight) : undefined,
     background: /^#[0-9a-f]{6}$/i.test(data.background ?? '') ? data.background : undefined,
   };

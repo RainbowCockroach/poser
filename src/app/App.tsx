@@ -1,6 +1,6 @@
 /*
  * Poser app shell: the 3D stage on the left (or top on phones) and the edit panel.
- * Scene state lives here: the characters (each a profile and a pose), the lights, the background, plus undo history.
+ * Scene state lives here: the characters (each a profile and a pose), the props, the lights, the background, plus undo history.
  * Scenes and characters are saved as JSON files ("poser.scene/1", "poser.character/1") to share.
  * "Save PNG" re-renders the current view without the editing helpers (grid, ruler, light markers).
  * Run: npm run dev
@@ -18,6 +18,9 @@ import { normalizeProfile, type CharacterProfile } from '../core/rig';
 import { CONTROL_FOR_BONE, CONTROLS, type Pose } from '../core/pose';
 import { DEFAULT_LIGHTS, type SceneLight } from '../core/lights';
 import { useDragPosing } from './useDragPosing';
+import { PropMeshes, type PropEntry } from './Props';
+import type { SceneProp } from '../core/props';
+import type { Vec3 } from '../core/rig';
 // #endregion
 
 // #region Types and config
@@ -34,6 +37,7 @@ export interface LightEntry extends SceneLight {
 
 export interface SceneState {
   characters: SceneCharacter[];
+  sceneProps: PropEntry[];
   lights: LightEntry[];
   background: string;
 }
@@ -41,6 +45,7 @@ export interface SceneState {
 export interface SceneFile {
   format: 'poser.scene/1';
   characters: { profile: CharacterProfile; pose: Pose }[];
+  props?: SceneProp[];
   lights?: SceneLight[];
   background?: string;
 }
@@ -80,17 +85,19 @@ export function App() {
           profile: normalizeProfile(profile),
           pose: { position: [(index - (all.length - 1) / 2) * CHARACTER_SPACING, 0, 0] },
         })),
+      sceneProps: [],
       lights: DEFAULT_LIGHTS.map((light) => ({ ...light, id: newLightId() })),
       background: DEFAULT_BACKGROUND,
     } as SceneState,
     past: [] as SceneState[],
     future: [] as SceneState[],
   }));
-  const { characters, lights, background } = scene.present;
+  const { characters, sceneProps, lights, background } = scene.present;
   const lastChange = useRef({ key: '', time: 0 });
   const [selectedId, setSelectedId] = useState<string | null>(() => characters[0]?.id ?? null);
   const [selectedControl, setSelectedControl] = useState<string | null>(null);
   const [selectedLightId, setSelectedLightId] = useState<string | null>(null);
+  const [selectedPropId, setSelectedPropId] = useState<string | null>(null);
   const [isFrontView, setIsFrontView] = useState(false);
   const [isPinFeet, setIsPinFeet] = useState(false);
   const [exportRequest, setExportRequest] = useState<ExportRequest | null>(null);
@@ -154,10 +161,14 @@ export function App() {
         <Canvas shadows={SHADOW_TYPE} frameloop="demand" dpr={[1, 2]} onPointerMissed={() => setSelectedControl(null)}>
           <Stage
             characters={characters}
+            sceneProps={sceneProps}
             lights={lights}
             background={background}
             selected={selected}
             selectedLightId={selectedLightId}
+            selectedPropId={selectedPropId}
+            onSelectProp={setSelectedPropId}
+            onMoveProp={(id, position, gestureKey) => changeScene((state) => ({ ...state, sceneProps: state.sceneProps.map((prop) => (prop.id === id ? { ...prop, position } : prop)) }), gestureKey)}
             highlightedBones={highlightedBones}
             isFrontView={isFrontView}
             isPinFeet={isPinFeet}
@@ -186,12 +197,16 @@ export function App() {
       </div>
       <Panel
         characters={characters}
+        sceneProps={sceneProps}
         lights={lights}
         background={background}
         selected={selected}
         selectedControl={selectedControl}
         selectedLightId={selectedLightId}
+        selectedPropId={selectedPropId}
         onSelectLight={setSelectedLightId}
+        onSelectProp={setSelectedPropId}
+        onChangeProps={(update, key) => changeScene((state) => ({ ...state, sceneProps: update(state.sceneProps) }), key)}
         onChangeLights={(update, key) => changeScene((state) => ({ ...state, lights: update(state.lights) }), key)}
         onChangeBackground={(color) => changeScene((state) => ({ ...state, background: color }), 'background')}
         onExport={setExportRequest}
@@ -207,6 +222,7 @@ export function App() {
           setSelectedId(next.characters[0]?.id ?? null);
           setSelectedControl(null);
           setSelectedLightId(null);
+          setSelectedPropId(null);
         }}
         onAddCharacter={(profile) => {
           const rightmost = Math.max(-CHARACTER_SPACING, ...characters.map((character) => character.pose.position?.[0] ?? 0));
@@ -227,10 +243,14 @@ export function App() {
 
 interface StageProps {
   characters: SceneCharacter[];
+  sceneProps: PropEntry[];
   lights: LightEntry[];
   background: string;
   selected: SceneCharacter | null;
   selectedLightId: string | null;
+  selectedPropId: string | null;
+  onSelectProp: (id: string) => void;
+  onMoveProp: (id: string, position: Vec3, gestureKey: string) => void;
   highlightedBones: string[];
   isFrontView: boolean;
   isPinFeet: boolean;
@@ -307,6 +327,7 @@ function Stage(props: StageProps) {
         <planeGeometry args={[40, 40]} />
         <shadowMaterial opacity={0.18} />
       </mesh>
+      <PropMeshes props={props.sceneProps} selectedPropId={props.selectedPropId} isExporting={isExporting} onSelect={props.onSelectProp} onMove={props.onMoveProp} />
       <Grid visible={isShowingGuides} infiniteGrid cellSize={0.1} sectionSize={1} cellColor="#c9ccd6" sectionColor="#9aa0b3" fadeDistance={25} position={[0, 0.001, 0]} />
 
       <group visible={isShowingGuides} position={[leftmost - 0.7, 0, -0.3]}>
@@ -360,6 +381,11 @@ export function newCharacterId() {
 export function newLightId() {
   idCounter += 1;
   return `light-${idCounter}`;
+}
+
+export function newPropId() {
+  idCounter += 1;
+  return `prop-${idCounter}`;
 }
 
 function ReferenceImage({ character, isVisible }: { character: SceneCharacter; isVisible: boolean }) {

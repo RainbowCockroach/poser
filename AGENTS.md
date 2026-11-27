@@ -12,6 +12,7 @@ node src/cli/poser.ts help                                     # every command a
 node src/cli/poser.ts render scenes/sample.scene.json --view front --out front.png
 node src/cli/poser.ts render scenes/sample.scene.json --focus hand_r --character Bush   # close-up of one part
 node src/cli/poser.ts hand   scenes/sample.scene.json Potat fist --hand r               # whole hand shape
+node src/cli/poser.ts prop   scenes/sample.scene.json chair --x 0.5 --z 0.2             # then pose Bush "Sit on a chair"
 node src/cli/poser.ts pose   scenes/sample.scene.json Bush "Sit on a chair"
 node src/cli/poser.ts touch  scenes/sample.scene.json Potat hand_r head --target Bush
 node src/cli/poser.ts check  scenes/sample.scene.json          # body parts sinking into each other
@@ -78,7 +79,13 @@ Multipliers are relative to a realistic adult (1 = average). `weight` is −1 (t
 }
 ```
 
-`position` moves the whole character (x/z on the floor, y up). Angles are degrees and are clamped to
+`position` moves the whole character (x/z on the floor, y up).
+
+Props (optional `props` list): `{ "kind": "chair", "position": [0.5, 0, 0.2], "turn": 0, "size": [0.45, 0.45, 0.45], "color": "#b9a58c" }`.
+`kind` is `chair`, `stool`, `box`, `step`, `wall` or `table`; `size` is width, height, depth in meters (for a chair
+or stool the height is the seat); `turn` is degrees like a character's. A prop faces +Z, so a chair's back is
+on its −Z side. `drop` and `pose` land a character on a prop top that is at most 25 cm above its lowest point,
+so put the chair under the character first, then apply a sitting pose. `PROP_KINDS` in `src/core/props.ts`. Angles are degrees and are clamped to
 the real human range, so asking for more than a body can do just stops at the limit.
 
 Lights: `kind` is `sun`, `spot`, `point` (a lamp) or `ambient`. Each shines from `position` toward `target`.

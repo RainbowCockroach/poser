@@ -2,7 +2,7 @@
  * Where the body is in space, and how to move it there.
  *   reach():       change joint angles so body points land on targets (drag a hand, keep feet planted)
  *   dragMotions(): which joint angles a drag on a bone is allowed to change
- *   dropToFloor(): lift or lower a character so its lowest point touches y = 0
+ *   dropToFloor(): lift or lower a character so its lowest point touches the floor, or the top of a prop under it
  * reach() works on the anatomical angles, not on raw rotations, so the result still respects
  * every joint limit and coupled motion of pose.ts. It is a damped least squares solve with a
  * numeric Jacobian (the whole body is cheap enough to re-solve per probe).
@@ -13,6 +13,7 @@
 import { Vector3 } from 'three';
 import { CONTROL_FOR_BONE, CONTROLS, forwardKinematics, solvePose, type Pose } from './pose.ts';
 import type { Rig, Shape, Vec3 } from './rig.ts';
+import type { PropBox } from './props.ts';
 // #endregion
 
 // #region Types
@@ -37,6 +38,8 @@ const STRAIGHT_HINGE_START_DEGREES = 5;
 // Twisting around the segment's own axis is a last resort, so arms keep a natural elbow direction.
 const TWIST_WEIGHT = 0.35;
 const TWIST_MOTIONS = new Set(['turn', 'rotation', 'internal_rotation', 'pronation']);
+// A body part this far below a prop's top still lands on it (a sitting pose settles onto the seat); deeper means it stands beside or inside it.
+const LAND_ON_PROP_METERS = 0.25;
 // #endregion
 
 // #region Main flow
@@ -137,14 +140,23 @@ export function legMotions(side: string, includeAnkle: boolean): ReachMotion[] {
   return motions;
 }
 
-export function dropToFloor(rig: Rig, pose: Pose): Pose {
+export function dropToFloor(rig: Rig, pose: Pose, props: PropBox[] = []): Pose {
   const world = forwardKinematics(rig, solvePose(pose));
+  const up = new Vector3(0, 1, 0);
   let lowest = Infinity;
   for (const bone of rig.bones) {
     const { position, quaternion } = world[bone.name];
     for (const shape of bone.shapes) {
       for (const point of surfaceSamples(shape)) {
-        lowest = Math.min(lowest, point.applyQuaternion(quaternion).add(position).y);
+        point.applyQuaternion(quaternion).add(position);
+        let ground = 0;
+        for (const box of props) {
+          const top = box.center[1] + box.halfSize[1];
+          if (point.y < top - LAND_ON_PROP_METERS || top <= ground) continue;
+          const local = point.clone().sub(new Vector3(...box.center)).applyAxisAngle(up, (-box.turnDegrees * Math.PI) / 180);
+          if (Math.abs(local.x) <= box.halfSize[0] && Math.abs(local.z) <= box.halfSize[2]) ground = top;
+        }
+        lowest = Math.min(lowest, point.y - ground);
       }
     }
   }

@@ -1,6 +1,6 @@
 /*
  * Renders a scene to a PNG without a browser or GPU, for the CLI and the MCP server.
- * A small ray tracer over the same mannequin shapes the app draws (balls, ellipsoids, tapered capsules),
+ * A small ray tracer over the same shapes the app draws (balls, ellipsoids, tapered capsules, prop boxes),
  * lit by the scene lights with hard shadows on a floor in the background color.
  * Light math follows three.js (Lambert part of MeshStandardMaterial, ACES tone mapping), so a render
  * looks close to the app's "Save PNG", minus soft shadow edges and shine.
@@ -13,6 +13,7 @@ import { Color, Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
 import { forwardKinematics, solvePose, type Pose } from '../core/pose.ts';
 import type { SceneLight } from '../core/lights.ts';
 import type { Rig } from '../core/rig.ts';
+import { propBoxes, type SceneProp } from '../core/props.ts';
 // #endregion
 
 // #region Types and config
@@ -20,6 +21,7 @@ export type View = 'front' | 'three-quarter' | 'side' | 'back' | 'top';
 
 export interface RenderScene {
   characters: { rig: Rig; pose: Pose }[];
+  props?: SceneProp[];
   lights: SceneLight[];
   background: string;
 }
@@ -46,7 +48,7 @@ export const VIEWS: Record<View, Vec3Tuple> = {
 type Vec3Tuple = [number, number, number];
 
 interface Primitive {
-  kind: 'sphere' | 'ellipsoid' | 'capsule';
+  kind: 'sphere' | 'ellipsoid' | 'capsule' | 'box';
   bone: string;
   // World → local: subtract `origin`, then multiply by `toLocal` (a rotation).
   origin: Vector3;
@@ -86,13 +88,28 @@ const CRC_TABLE = Array.from({ length: 256 }, (_, index) => {
 export function renderScene(scene: RenderScene, options: RenderOptions): { width: number; height: number; rgba: Uint8Array } {
   const supersample = Math.max(1, Math.round(options.supersample ?? 2));
   const groups = scene.characters.map((character) => groupOf(character.rig, character.pose));
+  const characterPrimitives = groups.map((group) => group.primitives);
+  for (const prop of scene.props ?? []) {
+    const color = linearColor(prop.color);
+    const primitives = propBoxes(prop).map((box): Primitive => {
+      const toWorld = new Matrix3().setFromMatrix4(new Matrix4().makeRotationY((box.turnDegrees * Math.PI) / 180));
+      const center = new Vector3(...box.center);
+      const radii = new Vector3(...box.halfSize);
+      return {
+        kind: 'box', bone: '', origin: center, toLocal: toWorld.clone().transpose(), toWorld, radius: 0, radii, start: new Vector3(), end: new Vector3(),
+        radiusStart: 0, radiusEnd: 0, squash: new Vector3(1, 1, 1), smallestSquash: 1, boundCenter: center, boundRadius: radii.length(), color,
+      };
+    });
+    const center = primitives.reduce((sum, primitive) => sum.add(primitive.boundCenter), new Vector3()).divideScalar(primitives.length);
+    groups.push({ center, radius: Math.max(...primitives.map((primitive) => primitive.boundCenter.distanceTo(center) + primitive.boundRadius)), primitives });
+  }
   const background = linearColor(scene.background);
   const backgroundSrgb = [1, 3, 5].map((start) => parseInt(scene.background.slice(start, start + 2), 16) / 255);
 
   // Camera: look at the middle of everything (or of the focused bones), back off along the view direction until it all fits.
   const focus = options.focus;
   const framed = focus
-    ? (groups[focus.character]?.primitives ?? []).filter((primitive) => focus.bones.includes(primitive.bone))
+    ? (characterPrimitives[focus.character] ?? []).filter((primitive) => focus.bones.includes(primitive.bone))
     : groups.flatMap((group) => group.primitives);
   if (focus && framed.length === 0) throw new Error(`Nothing to focus on: no shapes for ${focus.bones.join(', ')}`);
   const box = { min: new Vector3(Infinity, Infinity, Infinity), max: new Vector3(-Infinity, -Infinity, -Infinity) };
@@ -309,6 +326,26 @@ function intersect(primitive: Primitive, origin: Vector3, direction: Vector3, ra
   const localOrigin = origin.clone().sub(primitive.origin).applyMatrix3(primitive.toLocal);
   const localDirection = direction.clone().applyMatrix3(primitive.toLocal);
 
+  if (primitive.kind === 'box') {
+    let enter = -Infinity;
+    let exit = Infinity;
+    for (let axis = 0; axis < 3; axis++) {
+      const start = localOrigin.getComponent(axis);
+      const step = localDirection.getComponent(axis);
+      const half = primitive.radii.getComponent(axis);
+      if (Math.abs(step) < 1e-12) {
+        if (Math.abs(start) > half) return null;
+        continue;
+      }
+      const near = (-half - start) / step;
+      const far = (half - start) / step;
+      enter = Math.max(enter, Math.min(near, far));
+      exit = Math.min(exit, Math.max(near, far));
+    }
+    if (enter > exit) return null;
+    return enter > minimum ? enter : exit > minimum ? exit : null;
+  }
+
   if (primitive.kind === 'ellipsoid') {
     const scaledOrigin = localOrigin.divide(primitive.radii);
     const scaledDirection = localDirection.divide(primitive.radii);
@@ -339,6 +376,11 @@ function normalAt(primitive: Primitive, point: Vector3): Vector3 {
   if (primitive.kind === 'sphere') return point.clone().sub(primitive.origin).normalize();
   const local = point.clone().sub(primitive.origin).applyMatrix3(primitive.toLocal);
   if (primitive.kind === 'ellipsoid') return local.divide(primitive.radii).divide(primitive.radii).applyMatrix3(primitive.toWorld).normalize();
+  if (primitive.kind === 'box') {
+    const scaled = local.clone().divide(primitive.radii);
+    const axis = Math.abs(scaled.x) >= Math.abs(scaled.y) && Math.abs(scaled.x) >= Math.abs(scaled.z) ? 0 : Math.abs(scaled.y) >= Math.abs(scaled.z) ? 1 : 2;
+    return new Vector3().setComponent(axis, Math.sign(scaled.getComponent(axis))).applyMatrix3(primitive.toWorld);
+  }
 
   const unsquashed = local.sub(primitive.start).divide(primitive.squash).add(primitive.start);
   const step = 0.0005;

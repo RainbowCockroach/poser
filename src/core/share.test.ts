@@ -20,6 +20,7 @@ describe('share links', () => {
       { profile: potat, pose: { position: [-0.5, 0, 0], joints: sitOnChair.joints } },
       { profile: bush, pose: { position: [0.5, 0, 0] } },
     ],
+    props: [{ kind: 'chair', position: [-0.5, 0, 0], turn: 0, size: [0.45, 0.45, 0.45], color: '#b9a58c' }],
     background: '#eef0f5',
   };
 

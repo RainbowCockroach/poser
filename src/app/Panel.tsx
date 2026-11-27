@@ -1,7 +1,7 @@
 /*
  * Edit panel: pick a character, pose its joints with anatomical sliders, mirror poses, apply poses
  * from the library, shape its body, place it, and open/save scene, character and pose files for sharing.
- * Scene-wide sections below the character: lights (presets or one by one) and saving the view as a PNG.
+ * Scene-wide sections below the character: props (chair, wall…), lights (presets or one by one) and saving the view as a PNG.
  * Joint sliders only allow the range a real body can do (limits live in core/pose.ts).
  * "My poses" are kept in this browser (localStorage); download a pose to share it.
  */
@@ -15,7 +15,9 @@ import { applyHandShape, HAND_SHAPES, type HandSide } from '../core/hands';
 import { BODY_PARTS, findOverlaps, separate, touch, type PosedCharacter, type TouchSide } from '../core/body';
 import { buildRig, DEFAULT_PROFILE, normalizeProfile, type CharacterProfile } from '../core/rig';
 import { DEFAULT_LIGHTS, LIGHT_PRESETS, MAX_INTENSITY, newLight, normalizeLight, placementOf, positionFromPlacement, type LightKind, type LightPlacement } from '../core/lights';
-import { DEFAULT_BACKGROUND, newCharacterId, newLightId, type ExportRequest, type LightEntry, type SceneCharacter, type SceneFile, type SceneState } from './App';
+import { newProp, normalizeProp, PROP_KINDS, propBoxes, MAX_PROP_SIZE, MIN_PROP_SIZE, type PropKind } from '../core/props';
+import type { PropEntry } from './Props';
+import { DEFAULT_BACKGROUND, newCharacterId, newLightId, newPropId, type ExportRequest, type LightEntry, type SceneCharacter, type SceneFile, type SceneState } from './App';
 // #endregion
 
 // #region Config
@@ -59,14 +61,18 @@ const BUILD_SLIDERS: { key: keyof CharacterProfile['build']; label: string; min:
 // #region Main flow
 interface PanelProps {
   characters: SceneCharacter[];
+  sceneProps: PropEntry[];
   lights: LightEntry[];
   background: string;
   selected: SceneCharacter | null;
   selectedControl: string | null;
   selectedLightId: string | null;
+  selectedPropId: string | null;
   onSelectCharacter: (id: string) => void;
   onSelectControl: (control: string | null) => void;
   onSelectLight: (id: string | null) => void;
+  onSelectProp: (id: string | null) => void;
+  onChangeProps: (update: (props: PropEntry[]) => PropEntry[], key: string) => void;
   onUpdateCharacter: (id: string, change: Partial<SceneCharacter>) => void;
   onChangeLights: (update: (lights: LightEntry[]) => LightEntry[], key: string) => void;
   onChangeBackground: (color: string) => void;
@@ -105,7 +111,7 @@ export function Panel(props: PanelProps) {
     const turn = selected.pose.joints?.pelvis?.turn;
     const joints = structuredClone(file.joints);
     if (turn) joints.pelvis = { ...joints.pelvis, turn };
-    const pose: Pose = dropToFloor(buildRig(selected.profile), { ...selected.pose, joints });
+    const pose: Pose = dropToFloor(buildRig(selected.profile), { ...selected.pose, joints }, props.sceneProps.flatMap(propBoxes));
     props.onUpdateCharacter(selected.id, { pose });
     setMessage(`${selected.profile.name}: ${file.name}`);
   };
@@ -116,6 +122,7 @@ export function Panel(props: PanelProps) {
       const scene = data as SceneFile;
       props.onReplaceScene({
         characters: scene.characters.map((entry) => ({ id: newCharacterId(), profile: normalizeProfile(entry.profile), pose: entry.pose ?? {} })),
+        sceneProps: (Array.isArray(scene.props) ? scene.props.filter((prop) => typeof prop === 'object' && prop) : []).map((prop) => ({ ...normalizeProp(prop), id: newPropId() })),
         // Scenes saved before lights existed get the default lights.
         lights: (Array.isArray(scene.lights) ? scene.lights.filter((light) => typeof light === 'object' && light).map(normalizeLight) : DEFAULT_LIGHTS).map((light) => ({ ...light, id: newLightId() })),
         background: /^#[0-9a-f]{6}$/i.test(scene.background ?? '') ? scene.background! : DEFAULT_BACKGROUND,
@@ -212,6 +219,7 @@ export function Panel(props: PanelProps) {
   const sceneFile = (): SceneFile => ({
     format: 'poser.scene/1',
     characters: characters.map(({ profile, pose }) => ({ profile, pose })),
+    ...(props.sceneProps.length > 0 && { props: props.sceneProps.map(({ id: _id, ...prop }) => prop) }),
     lights: props.lights.map(({ id: _id, ...light }) => light),
     background: props.background,
   });
@@ -282,6 +290,7 @@ export function Panel(props: PanelProps) {
           />
         )}
 
+        <PropsEditor {...props} />
         <LightsEditor {...props} />
         <ImageExport onExport={props.onExport} />
       </div>
@@ -459,7 +468,7 @@ function CharacterEditor(props: CharacterEditorProps) {
         <Slider label="up / down" unit=" m" min={-1.5} max={2} step={0.01} value={position[1]} onChange={(y) => setPose({ position: [position[0], y, position[2]] })} />
         <Slider label="turn" unit="°" min={-180} max={180} step={1} value={joints.pelvis?.turn ?? 0} onChange={(degrees) => setMotion('pelvis', 'turn', degrees)} />
         <div className="row">
-          <button onClick={() => setPose(dropToFloor(buildRig(profile), pose))} title="Move up or down until the lowest body part touches the floor">
+          <button onClick={() => setPose(dropToFloor(buildRig(profile), pose, props.sceneProps.flatMap(propBoxes)))} title="Move up or down until the lowest body part touches the floor, or a seat or step just under it">
             Drop to floor
           </button>
         </div>
@@ -621,6 +630,82 @@ function TouchEditor({ characters, selected, onUpdateCharacter }: { characters: 
           Fix overlaps
         </button>
       </div>
+    </details>
+  );
+}
+
+function PropsEditor({ sceneProps, selected, selectedPropId, onSelectProp, onChangeProps }: PanelProps) {
+  const selectedProp = sceneProps.find((prop) => prop.id === selectedPropId) ?? null;
+  const updateProp = (change: Partial<PropEntry>) => {
+    if (!selectedProp) return;
+    onChangeProps((list) => list.map((prop) => (prop.id === selectedProp.id ? { ...prop, ...change } : prop)), `prop:${selectedProp.id}:${Object.keys(change).join()}`);
+  };
+  const sizeLabels = selectedProp?.kind === 'chair' || selectedProp?.kind === 'stool' ? ['Width', 'Seat height', 'Depth'] : ['Width', 'Height', 'Depth'];
+
+  return (
+    <details>
+      <summary>Props</summary>
+      <p className="hint">Furniture to sit on, lean on or stand on. A seat or step appears under the selected character: pick a sitting pose and it lands on the seat. Drag a prop on the stage to move it.</p>
+      <div className="row">
+        {(Object.keys(PROP_KINDS) as PropKind[]).map((kind) => (
+          <button
+            key={kind}
+            onClick={() => {
+              // Seats and steps go right under the selected character (a sitting pose then lands on them), a wall behind it, a table in front.
+              const [x, , z] = selected?.pose.position ?? [0, 0, 0];
+              const offset = kind === 'wall' ? -0.5 : kind === 'table' ? 0.6 : 0;
+              const added = { ...newProp(kind, [x, 0, z + offset]), id: newPropId() };
+              onChangeProps((list) => [...list, added], 'props:add');
+              onSelectProp(added.id);
+            }}
+          >
+            + {PROP_KINDS[kind].label}
+          </button>
+        ))}
+      </div>
+      {sceneProps.length > 0 && (
+        <div className="chips">
+          {sceneProps.map((prop) => (
+            <button key={prop.id} className={prop.id === selectedPropId ? 'chip is-active' : 'chip'} style={{ borderColor: prop.color }} onClick={() => onSelectProp(prop.id === selectedPropId ? null : prop.id)}>
+              {PROP_KINDS[prop.kind].label}
+            </button>
+          ))}
+        </div>
+      )}
+      {selectedProp && (
+        <>
+          <Slider label="left / right" unit=" m" min={-5} max={5} step={0.01} value={selectedProp.position[0]} onChange={(x) => updateProp({ position: [x, selectedProp.position[1], selectedProp.position[2]] })} />
+          <Slider label="back / front" unit=" m" min={-5} max={5} step={0.01} value={selectedProp.position[2]} onChange={(z) => updateProp({ position: [selectedProp.position[0], selectedProp.position[1], z] })} />
+          <Slider label="turn" unit="°" min={-180} max={180} step={1} value={selectedProp.turn} onChange={(turn) => updateProp({ turn })} />
+          {sizeLabels.map((label, axis) => (
+            <Slider
+              key={label}
+              label={label}
+              unit=" m"
+              min={MIN_PROP_SIZE}
+              max={Math.min(MAX_PROP_SIZE, axis === 1 ? 3 : 4)}
+              step={0.01}
+              value={selectedProp.size[axis]}
+              onChange={(value) => updateProp({ size: selectedProp.size.map((current, index) => (index === axis ? value : current)) as PropEntry['size'] })}
+            />
+          ))}
+          <label className="field">
+            Color
+            <input type="color" value={selectedProp.color} onChange={(event) => updateProp({ color: event.target.value })} />
+          </label>
+          <div className="row">
+            <button
+              className="danger"
+              onClick={() => {
+                onChangeProps((list) => list.filter((prop) => prop.id !== selectedProp.id), 'props:remove');
+                onSelectProp(null);
+              }}
+            >
+              Remove prop
+            </button>
+          </div>
+        </>
+      )}
     </details>
   );
 }
