@@ -33,7 +33,8 @@ default both). They set only the finger and thumb controls; `HAND_SHAPES` in `sr
 Body parts for `touch`, `check` and `render --focus`: `head`, `neck`, `chest`, `belly`, `hips`, and per side (`_l`/`_r`)
 `shoulder`, `upper_arm`, `elbow`, `forearm`, `hand`, `thigh`, `knee`, `shin`, `foot`. `touch` bends the
 limb that owns the part (a torso part slides the whole character over the floor instead) and keeps the
-rest of the limb out of the body; `--side front|back|left|right` picks a side of the target part in its
+rest of the limb out of the body; when an arm or the head can't reach, it bends over at the hips with the
+feet kept in place (a standing hand reaches its own foot); `--side front|back|left|right` picks a side of the target part in its
 own frame (the front of a seated thigh faces up). If a target is out of reach it gets as close as the
 joint limits allow and says how far is left; move the character closer and run it again.
 

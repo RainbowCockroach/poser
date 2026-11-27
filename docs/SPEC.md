@@ -64,8 +64,9 @@ values, see sources). Coupled motion:
    (WebView) and the iPad and iPhone simulators.
 6. ✅ Hand shapes: one tap sets a whole hand (relaxed, fist, flat, spread, point, peace, grip, pinch) on one or
    both hands, in the app and the CLI (`hand`). `render --focus hand_l` frames one body part up close.
-7. Whole-body reach: when a limb alone can't get there, `touch` also bends the spine and the hips, so a
-   standing character can put a hand on its own knee or reach the floor.
+7. ✅ Whole-body reach: when an arm (or the head) and the back can't get there, `touch` leans the whole body:
+   the pelvis tilts, the legs keep the feet where they stood and the hips shift back, so a standing character
+   can put a hand on its own knee or foot. A free arm that was hanging keeps hanging toward the floor.
 8. Props: simple furniture (box, chair, stool, wall, step) to sit on, lean on or stand on; placed, moved
    and turned like characters, saved in the scene, drawn by the CLI render, and "Drop to floor" lands on them.
 9. Camera: lens choice (wide 24 mm to portrait 85 mm, since perspective matters for drawing) and saved

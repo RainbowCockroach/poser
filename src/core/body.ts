@@ -84,6 +84,9 @@ const IGNORED_BONES = /^(index|middle|ring|pinky|thumb)_|^toes_/;
 const SPINE_WEIGHT = 0.4;
 const TWIST_WEIGHT = 0.35;
 const GIRDLE_WEIGHT = 0.3;
+const LEAN_WEIGHT = 0.5;
+// Leaning the whole body is a last resort, tried only when the limb and back alone stay this far off.
+const LEAN_AFTER_GAP_METERS = 0.01;
 const ARM_SEEDS: Record<string, Record<string, number>>[] = [
   { shoulder: { flexion: 90, abduction: 30 }, elbow: { flexion: 90 } },
   { shoulder: { flexion: 20, abduction: 90 }, elbow: { flexion: 110 } },
@@ -158,7 +161,17 @@ export function touch(characters: PosedCharacter[], index: number, part: string,
   const isTouchedPair = (bone: string, otherIndex: number, otherBone: string) => bone === effector.bone && otherIndex === targetIndex && otherBone === target.bone;
   const gapOf = (pose: Pose) => partContact({ ...character, pose }, effector, targetIndex === index ? { ...character, pose } : characters[targetIndex], target, side).gap;
 
-  const solveFrom = (start: Pose): Pose => {
+  // A lean tilts the pelvis forward or sideways while both legs keep the feet where they stand.
+  const startWorld = forwardKinematics(character.rig, solvePose(character.pose));
+  const plantedFeet: ReachGoal[] = ['ankle_l', 'ankle_r', 'toes_l', 'toes_r'].map((bone) => ({ bone, point: [0, 0, 0], target: startWorld[bone].position.toArray() as Vec3 }));
+  const leanMotions: ReachMotion[] = [
+    { control: 'pelvis', motion: 'forward_tilt', weight: LEAN_WEIGHT },
+    { control: 'pelvis', motion: 'side_tilt', weight: LEAN_WEIGHT },
+    ...legMotions('l', true),
+    ...legMotions('r', true),
+  ];
+
+  const solveFrom = (start: Pose, isLeaning = false): Pose => {
     let pose = start;
     for (let round = 0; round < SOLVE_ROUNDS; round++) {
       const contact = partContact({ ...character, pose }, effector, targetIndex === index ? { ...character, pose } : characters[targetIndex], target, side);
@@ -194,7 +207,18 @@ export function touch(characters: PosedCharacter[], index: number, part: string,
       const pushes = pushOutGoals(characters, index, pose, (bone, otherIndex, otherBone) => isOnLimb(bone) && !isTouchedPair(bone, otherIndex, otherBone));
       if (isTouching && pushes.goals.length === 0) break;
       const goals = [goalFor(character.rig, pose, effector.bone, contact.pointOnShape, goal), ...pushes.goals];
-      pose = reach(character.rig, pose, goals, chainMotions(effector.bone, !isTargetOnSpine));
+      if (!isLeaning) {
+        pose = reach(character.rig, pose, goals, chainMotions(effector.bone, !isTargetOnSpine));
+        continue;
+      }
+      pose = reach(character.rig, pose, [...goals, ...plantedFeet], [...chainMotions(effector.bone, true), ...leanMotions]);
+      // Bending over pivots on the pelvis and drags the feet; a real body shifts its hips back instead, so move the body by the drift.
+      const world = forwardKinematics(character.rig, solvePose(pose));
+      const drift = new Vector3();
+      for (const foot of plantedFeet) drift.add(world[foot.bone].position).sub(new Vector3(...foot.target));
+      drift.divideScalar(plantedFeet.length);
+      const [x, y, z] = pose.position ?? [0, 0, 0];
+      pose = { ...pose, position: [round3(x - drift.x), round3(y - drift.y), round3(z - drift.z)] };
     }
     return pose;
   };
@@ -209,16 +233,37 @@ export function touch(characters: PosedCharacter[], index: number, part: string,
   }
 
   let best: { pose: Pose; gap: number; score: number } | null = null;
-  for (const start of starts) {
-    const pose = solveFrom(start);
+  const keepIfBetter = (pose: Pose) => {
     const gap = gapOf(pose);
     const overlapDepth = findOverlaps(characters.map((other, otherIndex) => (otherIndex === index ? { ...other, pose } : other)))
       .filter((overlap) => (overlap.character === index && isOnLimb(overlap.bone)) || (overlap.otherCharacter === index && isOnLimb(overlap.otherBone)))
       .reduce((sum, overlap) => sum + overlap.depthMeters, 0);
     const score = Math.abs(gap) + overlapDepth;
     if (!best || score < best.score) best = { pose, gap, score };
+  };
+  for (const start of starts) keepIfBetter(solveFrom(start));
+
+  // Out of reach for the limb and back: lean the whole body (a hand to the own knee, a head to someone's shoulder).
+  const canLean = (effectorGroup === 'arm' || effectorGroup === 'head') && !isTargetOnSpine;
+  if (canLean && Math.abs(best!.gap) > LEAN_AFTER_GAP_METERS) for (const start of [best!.pose, ...starts]) keepIfBetter(solveFrom(start, true));
+
+  // A free arm that was left hanging keeps hanging toward the floor when the body bends over, instead of pointing at the sky.
+  const result = best!;
+  const otherSide = limbSide === 'l' ? 'r' : 'l';
+  const hasLeaned = (result.pose.joints?.pelvis?.forward_tilt ?? 0) > (character.pose.joints?.pelvis?.forward_tilt ?? 0);
+  if (effectorGroup === 'arm' && hasLeaned && !character.pose.joints?.[`shoulder_${otherSide}`]) {
+    const world = forwardKinematics(character.rig, solvePose(result.pose));
+    const shoulder = world[`shoulder_${otherSide}`].position;
+    const below = shoulder.clone().setY(shoulder.y - shoulder.distanceTo(world[`elbow_${otherSide}`].position));
+    const hanging = { bone: `elbow_${otherSide}`, point: [0, 0, 0] as Vec3, target: below.toArray() as Vec3 };
+    const motions = ['flexion', 'abduction'].map((motion) => ({ control: `shoulder_${otherSide}`, motion }));
+    const hung = reach(character.rig, { ...result.pose, joints: { ...result.pose.joints, [`shoulder_${otherSide}`]: { flexion: 90 } } }, [hanging], motions);
+    const isArmInBody = findOverlaps(characters.map((other, otherIndex) => (otherIndex === index ? { ...other, pose: hung } : other))).some(
+      (overlap) => (overlap.character === index && boneGroup(overlap.bone) === 'arm' && overlap.bone.endsWith(`_${otherSide}`)) || (overlap.otherCharacter === index && boneGroup(overlap.otherBone) === 'arm' && overlap.otherBone.endsWith(`_${otherSide}`)),
+    );
+    if (!isArmInBody) result.pose = hung;
   }
-  return { pose: best!.pose, gapMeters: Math.round(best!.gap * 1000) / 1000 };
+  return { pose: result.pose, gapMeters: Math.round(result.gap * 1000) / 1000 };
 }
 
 // Pushes the limbs of `characters[index]` out of its own body and out of other characters. Torsos inside another character slide away.

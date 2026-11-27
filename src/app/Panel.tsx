@@ -538,17 +538,25 @@ function TouchEditor({ characters, selected, onUpdateCharacter }: { characters: 
   const overlaps = isOpen ? findOverlaps(posed).filter((overlap) => overlap.character === index || overlap.otherCharacter === index) : [];
   const partLabel = (name: string) => BODY_PARTS[name]?.label.toLowerCase() ?? name.replace(/_/g, ' ');
 
+  const [isWorking, setIsWorking] = useState(false);
+
+  // Bending the whole body over takes a second or more on a phone; show that before the page freezes for the solve.
   const touchNow = () => {
-    try {
-      const touched = touch(posed, index, part, targetIndex, targetPart, side);
-      onUpdateCharacter(selected.id, { pose: touched.pose });
-      const gap = Math.round(Math.abs(touched.gapMeters) * 100);
-      if (gap < 1) setResult('Touching.');
-      else if (touched.gapMeters < 0) setResult(`Ended ${gap} cm inside; the joints can't pull back further. Try another side.`);
-      else setResult(`Got within ${gap} cm; the joints can't reach further. Move the character closer and try again.`);
-    } catch (error) {
-      setResult((error as Error).message);
-    }
+    setIsWorking(true);
+    setResult('Bending…');
+    setTimeout(() => {
+      try {
+        const touched = touch(posed, index, part, targetIndex, targetPart, side);
+        onUpdateCharacter(selected.id, { pose: touched.pose });
+        const gap = Math.round(Math.abs(touched.gapMeters) * 100);
+        if (gap < 1) setResult('Touching.');
+        else if (touched.gapMeters < 0) setResult(`Ended ${gap} cm inside; the joints can't pull back further. Try another side.`);
+        else setResult(`Got within ${gap} cm; the joints can't reach further. Move the character closer and try again.`);
+      } catch (error) {
+        setResult((error as Error).message);
+      }
+      setIsWorking(false);
+    }, 50);
   };
 
   return (
@@ -591,7 +599,9 @@ function TouchEditor({ characters, selected, onUpdateCharacter }: { characters: 
         </select>
       </div>
       <div className="row">
-        <button onClick={touchNow}>Touch</button>
+        <button onClick={touchNow} disabled={isWorking}>
+          Touch
+        </button>
       </div>
       {result && <p className="hint">{result}</p>}
 

@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildRig, type CharacterProfile } from './rig.ts';
 import { findOverlaps, separate, touch, type PosedCharacter } from './body.ts';
+import { forwardKinematics, solvePose } from './pose.ts';
 import potat from '../../characters/potat.oc.json';
 import bush from '../../characters/bush.oc.json';
 import seana from '../../characters/seana.oc.json';
@@ -58,6 +59,21 @@ describe('body contact', () => {
     const result = touch([behind, front], 0, 'chest', 1, 'chest', 'back');
     expect(result.pose.position![2]).toBeGreaterThan(-0.8);
     expect(findOverlaps([{ ...behind, pose: result.pose }, front]).filter((overlap) => overlap.character !== overlap.otherCharacter)).toEqual([]);
+  });
+
+  it('leans the whole body to reach the own foot standing, keeping the feet in place', () => {
+    for (const character of samples) {
+      const result = touch(one(character), 0, 'hand_r', 0, 'foot_r');
+      expect(Math.abs(result.gapMeters), character.name).toBeLessThan(0.015);
+      expect(result.pose.joints?.pelvis?.forward_tilt ?? 0, character.name).toBeGreaterThan(20);
+      const before = forwardKinematics(character.rig, solvePose({}));
+      const after = forwardKinematics(character.rig, solvePose(result.pose));
+      for (const bone of ['ankle_l', 'ankle_r']) expect(after[bone].position.distanceTo(before[bone].position), `${character.name} ${bone}`).toBeLessThan(0.02);
+    }
+  });
+
+  it('gets a standing hand to the own knee', () => {
+    for (const character of samples) expect(Math.abs(touch(one(character), 0, 'hand_r', 0, 'knee_r').gapMeters), character.name).toBeLessThan(0.02);
   });
 
   it('says which body part names exist when given a wrong one', () => {
