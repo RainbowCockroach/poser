@@ -5,7 +5,7 @@
 
 // #region Config
 const POINTER_ROWS: { action: string; mouse: string; touch: string }[] = [
-  { action: 'Bend or move a part', mouse: 'Drag it or its dot', touch: 'Drag it or its dot with a finger or the pencil' },
+  { action: 'Bend or move a part', mouse: 'Drag it', touch: 'Drag it with a finger or the pencil' },
   { action: 'Twist a part', mouse: 'Drag along the ring around it', touch: 'Drag along the ring around it' },
   { action: 'Turn the character', mouse: 'Drag along the ring on the floor', touch: 'Drag along the ring on the floor' },
   { action: 'Reset, copy, pin a part', mouse: 'Right-click it', touch: 'Hold it still for a moment' },

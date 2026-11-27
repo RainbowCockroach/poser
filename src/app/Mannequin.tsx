@@ -32,13 +32,14 @@ interface MannequinProps {
   characterId: string;
   highlightedBones: string[];
   targetBone: string | null;
+  pinnedBones: string[];
   isPencilOnly: boolean;
   onGrab: (grab: Grab) => void;
   onLookCloser: (bone: string) => void;
   onMenu: (bone: string, clientX: number, clientY: number) => void;
 }
 
-export function Mannequin({ characterId, profile, pose, highlightedBones, targetBone, isPencilOnly, onGrab, onLookCloser, onMenu }: MannequinProps) {
+export function Mannequin({ characterId, profile, pose, highlightedBones, targetBone, pinnedBones, isPencilOnly, onGrab, onLookCloser, onMenu }: MannequinProps) {
   const rig = useMemo(() => buildRig(profile), [profile]);
   const camera = useThree((state) => state.camera);
   const viewportHeight = useThree((state) => state.size.height);
@@ -55,6 +56,7 @@ export function Mannequin({ characterId, profile, pose, highlightedBones, target
       accent: new MeshStandardMaterial({ color: base.clone().multiplyScalar(0.35), roughness: 0.6 }),
       highlight: new MeshStandardMaterial({ color: '#ff8a3d', emissive: '#ff6a00', emissiveIntensity: 0.25, roughness: 0.5 }),
       target: new MeshStandardMaterial({ color: '#7d79f0', emissive: '#3d4fd6', emissiveIntensity: 0.35, roughness: 0.5 }),
+      pinned: new MeshStandardMaterial({ color: base.clone().lerp(new Color('#ff8a3d'), 0.45), roughness: 0.6 }),
       hover: new MeshStandardMaterial({ color: base.clone().lerp(new Color('#ffffff'), 0.3), emissive: '#ff6a00', emissiveIntensity: 0.12, roughness: 0.6 }),
     };
   }, [profile.color]);
@@ -120,10 +122,11 @@ export function Mannequin({ characterId, profile, pose, highlightedBones, target
     for (const mesh of model.meshes) {
       const bone: string = mesh.userData.bone;
       const isHovered = hoveredControl !== null && CONTROL_FOR_BONE[bone] === hoveredControl;
-      mesh.material = bone === targetBone ? materials.target : highlightedBones.includes(bone) ? materials.highlight : isHovered ? materials.hover : mesh.userData.material;
+      const isPinned = pinnedBones.includes(bone);
+      mesh.material = bone === targetBone ? materials.target : highlightedBones.includes(bone) ? materials.highlight : isHovered ? materials.hover : isPinned ? materials.pinned : mesh.userData.material;
     }
     invalidate();
-  }, [model, materials, highlightedBones, hoveredControl, targetBone]);
+  }, [model, materials, highlightedBones, hoveredControl, targetBone, pinnedBones.join()]);
 
   useLayoutEffect(() => {
     model.root.userData.characterId = characterId;

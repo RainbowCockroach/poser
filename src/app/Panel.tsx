@@ -539,7 +539,7 @@ function PoseCard(props: PoseCardProps) {
         </>
       ) : (
         <>
-          <p className="hint">Drag a dot or any body part to pose it. Drag a ring to twist or turn. Right-click or hold a part for more.</p>
+          <p className="hint">Drag any body part to pose it. Drag a ring to twist or turn. Right-click or hold a part for more.</p>
           <div className="row">
             <button onClick={() => setPose({ joints: joints.pelvis?.turn ? { pelvis: { turn: joints.pelvis.turn } } : {} })} title="Key Shift R">
               Reset pose

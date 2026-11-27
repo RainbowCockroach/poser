@@ -782,6 +782,9 @@ function Stage(props: StageProps) {
           <Mannequin
             characterId={character.id}
             targetBone={props.touchTarget?.characterId === character.id ? props.touchTarget.bone : null}
+            pinnedBones={(props.pins[character.id] ?? []).flatMap((pin) =>
+              pin.startsWith('hand') ? [`wrist_${pin.slice(-1)}`, ...['thumb', 'index', 'middle', 'ring', 'pinky'].flatMap((finger) => [1, 2, 3].map((joint) => `${finger}_${joint}_${pin.slice(-1)}`))] : [`ankle_${pin.slice(-1)}`, `toes_${pin.slice(-1)}`],
+            )}
             isPencilOnly={props.isPencilOnly}
             profile={character.profile}
             pose={character.pose}
@@ -800,13 +803,7 @@ function Stage(props: StageProps) {
             <Handles
               character={character}
               selectedControl={props.selectedControl}
-              pins={props.pins[character.id] ?? []}
               isPencilOnly={props.isPencilOnly}
-              onGrab={(grab) => {
-                onSelect(character.id, CONTROL_FOR_BONE[grab.bone] ?? null);
-                startDrag(character, grab, props.pins[character.id] ?? []);
-              }}
-              onMenu={(bone, clientX, clientY) => props.onMenu(character.id, bone, clientX, clientY, false)}
               onTwist={(control, motion, degrees, startPose, gestureKey) => props.onTwist(character.id, control, motion, degrees, startPose, gestureKey)}
             />
           )}

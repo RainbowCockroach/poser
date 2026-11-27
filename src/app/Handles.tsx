@@ -1,22 +1,15 @@
 /*
- * Handles on the selected character, so it is clear what can be grabbed:
- *   - dots on the hands, feet, elbows, knees, head, chest and a square on the hips; grabbing a dot is the same as
- *     grabbing that body part at that point (useDragPosing). An elbow or knee dot swings the upper arm or thigh.
- *   - a ring around the selected part that twists it (upper arm, forearm, thigh, spine, head)
- *   - a ring on the floor that turns the whole character
- * Dots are page elements (drei Html): they keep their size on screen, are easy to hit with a finger and show through
- * the body. Pinned hands and feet show a filled dot. Rings are 3D; dragging along a ring turns the part about its axis.
+ * Rings on the selected character: one around the selected part twists it (upper arm, forearm, thigh, spine, head),
+ * one on the floor turns the whole character. Dragging along a ring turns the part about the ring's axis, like a dial.
+ * The body itself is grabbed directly (Mannequin.tsx); the part under the pointer and the selected part glow orange.
  */
 
 // #region Setup
-import { useMemo, type PointerEvent as ReactPointerEvent } from 'react';
-import { Html } from '@react-three/drei';
+import { useMemo } from 'react';
 import { useThree, type ThreeEvent } from '@react-three/fiber';
 import { Quaternion, Vector3 } from 'three';
-import { buildRig, type Rig, type Vec3 } from '../core/rig';
+import { buildRig, type Vec3 } from '../core/rig';
 import { CONTROLS, forwardKinematics, solvePose, type Pose } from '../core/pose';
-import type { Pin } from '../core/reach';
-import type { Grab } from './useDragPosing';
 import type { SceneCharacter } from './App';
 // #endregion
 
@@ -29,58 +22,31 @@ const TWIST_MOTION: Record<string, string> = {
   elbow: 'pronation',
   hip: 'internal_rotation',
 };
-const RING_COLOR = '#5b57d1';
+// The same orange as a selected body part.
+const RING_COLOR = '#ff8a3d';
 // Rings are drawn over the body so they never hide inside a thick limb.
 const RING_RENDER_ORDER = 10;
 const RING_LINE_METERS = 0.006;
 const RING_HIT_METERS = 0.05;
 
-interface Spot {
-  name: string;
-  label: string;
-  bone: string;
-  localPoint: Vec3;
-  kind: 'end' | 'joint' | 'hips';
-  pin?: Pin;
-}
-
 interface HandlesProps {
   character: SceneCharacter;
   selectedControl: string | null;
-  pins: Pin[];
   isPencilOnly: boolean;
-  onGrab: (grab: Grab) => void;
-  onMenu: (bone: string, clientX: number, clientY: number) => void;
   onTwist: (control: string, motion: string, degrees: number, startPose: Pose, gestureKey: string) => void;
 }
 // #endregion
 
 // #region Main flow
-export function Handles({ character, selectedControl, pins, isPencilOnly, onGrab, onMenu, onTwist }: HandlesProps) {
+export function Handles({ character, selectedControl, isPencilOnly, onTwist }: HandlesProps) {
   const camera = useThree((state) => state.camera);
   const canvas = useThree((state) => state.gl.domElement);
   const controls = useThree((state) => state.controls) as { enabled: boolean } | null;
   const rig = useMemo(() => buildRig(character.profile), [character.profile]);
-  const spots = useMemo(() => spotsOf(rig), [rig]);
   const world = useMemo(() => forwardKinematics(rig, solvePose(character.pose)), [rig, character.pose]);
   const heightMeters = character.profile.heightCm / 100;
 
   const worldPointOf = (bone: string, localPoint: Vec3) => new Vector3(...localPoint).applyQuaternion(world[bone].quaternion).add(world[bone].position);
-
-  const grabSpot = (spot: Spot, event: ReactPointerEvent) => {
-    if (event.button !== 0 || (isPencilOnly && event.pointerType === 'touch')) return;
-    event.preventDefault();
-    event.stopPropagation();
-    onGrab({
-      bone: spot.bone,
-      localPoint: spot.localPoint,
-      worldPoint: worldPointOf(spot.bone, spot.localPoint),
-      pointerId: event.pointerId,
-      pointerType: event.pointerType,
-      clientX: event.clientX,
-      clientY: event.clientY,
-    });
-  };
 
   // Turning follows the pointer's angle around the ring's middle on screen, so a drag along the ring feels like turning a dial.
   const startTwist = (event: ThreeEvent<PointerEvent>, control: string, motion: string, center: Vector3, axis: Vector3) => {
@@ -150,25 +116,6 @@ export function Handles({ character, selectedControl, pins, isPencilOnly, onGrab
 
   return (
     <>
-      {spots.map((spot) => {
-        const isPinned = !!spot.pin && pins.includes(spot.pin);
-        return (
-          <Html key={spot.name} position={worldPointOf(spot.bone, spot.localPoint)} center zIndexRange={[2, 1]}>
-            <div
-              className={`handle-dot is-${spot.kind}${isPinned ? ' is-pinned' : ''}`}
-              role="button"
-              aria-label={isPinned ? `${spot.label} (pinned)` : spot.label}
-              title={isPinned ? `${spot.label}, pinned: right-click or hold to unpin` : `Drag the ${spot.label.toLowerCase()}`}
-              onPointerDown={(event) => grabSpot(spot, event)}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                onMenu(spot.bone, event.clientX, event.clientY);
-              }}
-            />
-          </Html>
-        );
-      })}
-
       {twistRing && selectedControl && twistMotion && (
         <group position={twistRing.center} quaternion={twistRing.quaternion}>
           <Ring radius={twistRing.radius} onPointerDown={(event) => startTwist(event, selectedControl, twistMotion, twistRing!.center, twistRing!.axis)} />
@@ -196,27 +143,5 @@ function Ring({ radius, onPointerDown }: { radius: number; onPointerDown: (event
       </mesh>
     </group>
   );
-}
-
-function spotsOf(rig: Rig): Spot[] {
-  const boneNamed = (name: string) => rig.bones.find((bone) => bone.name === name)!;
-  const spots: Spot[] = [];
-  for (const side of ['l', 'r']) {
-    const sideName = side === 'l' ? 'Left' : 'Right';
-    const palm = boneNamed(`wrist_${side}`).shapes.find((shape) => shape.kind === 'capsule');
-    const foot = boneNamed(`ankle_${side}`).shapes.find((shape) => shape.kind === 'capsule');
-    if (palm?.kind === 'capsule') spots.push({ name: `hand_${side}`, label: `${sideName} hand`, bone: `wrist_${side}`, localPoint: palm.end, kind: 'end', pin: `hand_${side}` as Pin });
-    if (foot?.kind === 'capsule') {
-      const middle = foot.start.map((value, axis) => (value + foot.end[axis]) / 2);
-      spots.push({ name: `foot_${side}`, label: `${sideName} foot`, bone: `ankle_${side}`, localPoint: middle as Vec3, kind: 'end', pin: `foot_${side}` as Pin });
-    }
-    spots.push({ name: `elbow_${side}`, label: `${sideName} elbow`, bone: `shoulder_${side}`, localPoint: boneNamed(`elbow_${side}`).offset, kind: 'joint' });
-    spots.push({ name: `knee_${side}`, label: `${sideName} knee`, bone: `hip_${side}`, localPoint: boneNamed(`knee_${side}`).offset, kind: 'joint' });
-  }
-  const skull = boneNamed('head').shapes[0];
-  spots.push({ name: 'head', label: 'Head', bone: 'head', localPoint: skull.kind === 'ellipsoid' ? skull.center : [0, 0.1, 0], kind: 'joint' });
-  spots.push({ name: 'chest', label: 'Chest', bone: 'thoracic_upper', localPoint: boneNamed('neck').offset.map((value) => value / 2) as Vec3, kind: 'joint' });
-  spots.push({ name: 'hips', label: 'Hips', bone: 'pelvis', localPoint: [0, 0, 0], kind: 'hips' });
-  return spots;
 }
 // #endregion

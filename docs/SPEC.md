@@ -89,11 +89,11 @@ no wheel or middle button), so extra buttons and keys are only faster ways.
 11. ✅ New shell: five modes (Pose, Library, Body, Scene, Camera) on a rail (tab bar on phones), a card that shows only
     the controls of what is selected with exact numbers behind "More", a bottom sheet on phones, files in one menu. On wider screens the picture is shifted
     (camera view offset) so the middle of the view is the middle of the space the rail and card leave free.
-12. ✅ Handles on the selected character: dots on hands, feet, elbows, knees, head, chest and hips, one twist ring, a
-    floor ring to turn the character, pins per hand and foot, a right-click / long-press menu. Dots are page elements
-    (drei Html) so they keep a finger-sized target; pinned limbs are re-solved every drag frame (`holdPins`). The
-    two-finger and both-buttons twists from the proposal were left out: two fingers already slide the camera, and
-    the ring does the same with one button.
+12. ✅ Handles on the selected character: one twist ring on the selected part, a floor ring to turn the character,
+    pins per hand and foot (tinted orange; re-solved every drag frame by `holdPins`), a right-click / long-press menu.
+    Grab dots on the joints were tried and removed: they cluttered the figure; the orange hover glow shows what a drag
+    will move. The two-finger and both-buttons twists from the proposal were left out: two fingers already slide the
+    camera, and the ring does the same with one button.
 13. ✅ Pictures: thumbnails for poses (presets and My poses), hand shapes, lenses and light presets, drawn on the
     selected character's own body by the CLI ray tracer in a web worker (`src/app/thumbnails.worker.ts`), one at a time
     and cached; `src/cli/png.ts` holds the Node-only PNG encoding so `render.ts` runs in the browser too.

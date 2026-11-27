@@ -10,7 +10,7 @@ import { useState } from 'react';
 // #region Config
 const SEEN_STORAGE_KEY = 'poser.seenGuide';
 const TIPS = [
-  { title: 'Drag to pose', text: 'Drag a dot, or any body part. A hand pulls the whole arm, a foot the whole leg, the square on the hips moves the body.' },
+  { title: 'Drag to pose', text: 'Drag any body part; it glows orange under the pointer. A hand pulls the whole arm, a foot the whole leg, the hips move the body.' },
   { title: 'Twist and turn', text: 'Drag along the ring around a part to twist it. The ring on the floor turns the whole character.' },
   { title: 'More on each part', text: 'Right-click a part, or hold a finger on it, to reset, copy or pin it. Press ? (or the ? button) for every shortcut.' },
 ];
