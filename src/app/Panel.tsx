@@ -10,7 +10,7 @@
 // #region Setup
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { CONTROLS, copyLimbToOtherSide, mirrorPose, type Pose, type PoseFile } from '../core/pose';
-import { dropToFloor } from '../core/reach';
+import { dropToFloor, type Pin } from '../core/reach';
 import { MAX_SHARE_LINK_LENGTH, packForLink, readShareHash, shareLink, unpackFromLink, type SharedKind } from '../core/share';
 import { applyHandShape, HAND_SHAPES, type HandSide } from '../core/hands';
 import { BODY_PARTS, findOverlaps, separate, touch, type PosedCharacter, type TouchSide } from '../core/body';
@@ -115,6 +115,8 @@ interface PanelProps {
   onTravel: (direction: 'undo' | 'redo') => void;
   onOpenHelp: () => void;
   isCardFolded: boolean;
+  pins: Pin[];
+  onTogglePin: (pin: Pin) => void;
   onFoldCard: (isFolded: boolean) => void;
   onUpdateCharacter: (id: string, change: Partial<SceneCharacter>) => void;
   onChangeLights: (update: (lights: LightEntry[]) => LightEntry[], key: string) => void;
@@ -463,6 +465,8 @@ function PoseCard(props: PoseCardProps) {
   const side = selectedControl?.match(/_(l|r)$/)?.[1] as 'l' | 'r' | undefined;
   const isHandPart = !!selectedControl && /^(wrist|thumb|index|middle|ring|pinky)_/.test(selectedControl);
   const isLegPart = !!selectedControl && /^(hip|knee|ankle|toes)_/.test(selectedControl);
+  const pin = side && isHandPart ? (`hand_${side}` as Pin) : side && /^(ankle|toes)_/.test(selectedControl ?? '') ? (`foot_${side}` as Pin) : null;
+  const pinWord = pin?.startsWith('hand') ? 'Hand' : 'Foot';
 
   const setPose = (change: Partial<Pose>) => onUpdateCharacter(selected.id, { pose: { ...pose, ...change } });
   const setMotion = (controlName: string, motion: string, degrees: number) =>
@@ -516,6 +520,11 @@ function PoseCard(props: PoseCardProps) {
                 Copy this {isLegPart ? 'leg' : 'arm'} to the other side
               </button>
             )}
+            {pin && (
+              <button className={props.pins.includes(pin) ? 'is-active' : ''} aria-pressed={props.pins.includes(pin)} onClick={() => props.onTogglePin(pin)} title="A pinned hand or foot stays where it is while the rest of the body moves (key P)">
+                {props.pins.includes(pin) ? `${pinWord} pinned` : `Pin this ${pinWord.toLowerCase()}`}
+              </button>
+            )}
             {selectedControl === 'pelvis' && (
               <button className={props.isPinFeet ? 'is-active' : ''} aria-pressed={props.isPinFeet} onClick={props.onTogglePinFeet} title="When on, dragging the hips bends the legs and keeps the feet where they are (key P)">
                 {props.isPinFeet ? 'Feet pinned' : 'Pin feet'}
@@ -528,7 +537,7 @@ function PoseCard(props: PoseCardProps) {
         </>
       ) : (
         <>
-          <p className="hint">Drag a body part to pose it. Double-click a part to look closer.</p>
+          <p className="hint">Drag a dot or any body part to pose it. Drag a ring to twist or turn. Right-click or hold a part for more.</p>
           <div className="row">
             <button onClick={() => setPose({ joints: joints.pelvis?.turn ? { pelvis: { turn: joints.pelvis.turn } } : {} })} title="Key Shift R">
               Reset pose

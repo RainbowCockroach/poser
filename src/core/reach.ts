@@ -3,6 +3,7 @@
  *   reach():       change joint angles so body points land on targets (drag a hand, keep feet planted)
  *   dragMotions(): which joint angles a drag on a bone is allowed to change
  *   dropToFloor(): lift or lower a character so its lowest point touches the floor, or the top of a prop under it
+ *   holdPins():    bend the arms and legs so pinned hands and feet go back to where they were
  * reach() works on the anatomical angles, not on raw rotations, so the result still respects
  * every joint limit and coupled motion of pose.ts. It is a damped least squares solve with a
  * numeric Jacobian (the whole body is cheap enough to re-solve per probe).
@@ -28,6 +29,8 @@ export interface ReachMotion {
   motion: string;
   weight?: number;
 }
+
+export type Pin = 'hand_l' | 'hand_r' | 'foot_l' | 'foot_r';
 // #endregion
 
 // #region Config
@@ -138,6 +141,22 @@ export function legMotions(side: string, includeAnkle: boolean): ReachMotion[] {
   ];
   if (includeAnkle) motions.push({ control: `ankle_${side}`, motion: 'dorsiflexion' }, { control: `ankle_${side}`, motion: 'inversion' });
   return motions;
+}
+
+// A hand is held at the wrist and the middle knuckle (so it keeps its direction), a foot at the ankle and the toes.
+export function holdPins(rig: Rig, pose: Pose, pins: Pin[], world: ReturnType<typeof forwardKinematics>, iterations = 30): Pose {
+  let held = pose;
+  for (const pin of pins) {
+    const side = pin.slice(-1);
+    const isHand = pin.startsWith('hand');
+    const bones = isHand ? [`wrist_${side}`, `middle_1_${side}`] : [`ankle_${side}`, `toes_${side}`];
+    const goals = bones.map((bone) => ({ bone, point: [0, 0, 0] as Vec3, target: world[bone].position.toArray() as Vec3 }));
+    const motions = isHand
+      ? [...dragMotions(`wrist_${side}`), { control: `wrist_${side}`, motion: 'flexion' }, { control: `wrist_${side}`, motion: 'radial_deviation' }]
+      : legMotions(side, true);
+    held = reach(rig, held, goals, motions, iterations);
+  }
+  return held;
 }
 
 export function dropToFloor(rig: Rig, pose: Pose, props: PropBox[] = []): Pose {

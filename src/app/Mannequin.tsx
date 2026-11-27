@@ -32,9 +32,10 @@ interface MannequinProps {
   highlightedBones: string[];
   onGrab: (grab: Grab) => void;
   onLookCloser: (bone: string) => void;
+  onMenu: (bone: string, clientX: number, clientY: number) => void;
 }
 
-export function Mannequin({ profile, pose, highlightedBones, onGrab, onLookCloser }: MannequinProps) {
+export function Mannequin({ profile, pose, highlightedBones, onGrab, onLookCloser, onMenu }: MannequinProps) {
   const rig = useMemo(() => buildRig(profile), [profile]);
   const camera = useThree((state) => state.camera);
   const viewportHeight = useThree((state) => state.size.height);
@@ -148,10 +149,20 @@ export function Mannequin({ profile, pose, highlightedBones, onGrab, onLookClose
 
   const handlePointerDown = (event: ThreeEvent<PointerEvent>) => {
     event.stopPropagation();
-    // Right and middle buttons, and Alt with the left one, stay with the camera.
-    if (event.nativeEvent.button !== 0 || event.nativeEvent.altKey) return;
     const boneGroup = grabbedBoneGroup(event.object, event.point);
     const { clientX, clientY } = event.nativeEvent;
+
+    // A right-click that doesn't move opens the part's menu; a right-drag still slides the camera.
+    if (event.nativeEvent.button === 2) {
+      const handleUp = (upEvent: PointerEvent) => {
+        window.removeEventListener('pointerup', handleUp);
+        if (Math.hypot(upEvent.clientX - clientX, upEvent.clientY - clientY) < DOUBLE_PRESS_PIXELS / 4) onMenu(boneGroup.name, clientX, clientY);
+      };
+      window.addEventListener('pointerup', handleUp);
+      return;
+    }
+    // The middle button, and Alt with the left one, stay with the camera.
+    if (event.nativeEvent.button !== 0 || event.nativeEvent.altKey) return;
 
     const previous = lastPress.current;
     const now = performance.now();
@@ -167,6 +178,7 @@ export function Mannequin({ profile, pose, highlightedBones, onGrab, onLookClose
       localPoint: boneGroup.worldToLocal(event.point.clone()).toArray(),
       worldPoint: event.point.clone(),
       pointerId: event.pointerId,
+      pointerType: event.nativeEvent.pointerType,
       clientX,
       clientY,
     });

@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
 import { buildRig, type CharacterProfile } from './rig.ts';
 import { CONTROLS, copyLimbToOtherSide, forwardKinematics, mirrorPose, solvePose, type Pose } from './pose.ts';
-import { dragMotions, dropToFloor, legMotions, reach } from './reach.ts';
+import { dragMotions, dropToFloor, holdPins, legMotions, reach } from './reach.ts';
 import potat from '../../characters/potat.oc.json';
 import bush from '../../characters/bush.oc.json';
 // #endregion
@@ -49,6 +49,21 @@ describe('reach', () => {
     expect(world.ankle_l.position.distanceTo(rest.ankle_l.position)).toBeLessThan(0.01);
     expect(world.toes_r.position.distanceTo(rest.toes_r.position)).toBeLessThan(0.01);
     expect(posed.joints!.knee_l.flexion).toBeGreaterThan(40);
+  });
+
+  it('keeps a pinned hand on its spot while the chest bends, and pinned feet while the hips drop', () => {
+    const start: Pose = { joints: { shoulder_r: { flexion: 60 }, elbow_r: { flexion: 40 } } };
+    const before = worldOf(start);
+    const bent: Pose = { joints: { ...start.joints, thoracic: { flexion: 25, rotation: 20 } } };
+    const held = holdPins(rig, bent, ['hand_r'], before);
+    expect(worldOf(bent).wrist_r.position.distanceTo(before.wrist_r.position)).toBeGreaterThan(0.05);
+    expect(worldOf(held).wrist_r.position.distanceTo(before.wrist_r.position)).toBeLessThan(0.02);
+
+    // Like a drag: the hips go down a little per frame and the legs follow each time.
+    let squat: Pose = {};
+    for (let drop = 0.05; drop <= 0.25; drop += 0.05) squat = holdPins(rig, { ...squat, position: [0, -drop, 0] }, ['foot_l', 'foot_r'], worldOf({}));
+    expect(worldOf(squat).ankle_l.position.distanceTo(worldOf({}).ankle_l.position)).toBeLessThan(0.02);
+    expect(squat.joints!.knee_l.flexion).toBeGreaterThan(30);
   });
 
   it('dragging the forearm only bends the elbow', () => {

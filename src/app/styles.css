@@ -603,3 +603,64 @@ select,
   }
 }
 /* #endregion */
+
+/* #region Handles */
+.handle-dot {
+  width: 16px;
+  height: 16px;
+  border: 2.5px solid #5b57d1;
+  border-radius: 50%;
+  background: #ffffffe6;
+  box-shadow: 0 1px 3px #0004;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  transition: transform 0.1s;
+}
+
+.handle-dot.is-end {
+  width: 22px;
+  height: 22px;
+}
+
+.handle-dot.is-hips {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+}
+
+.handle-dot.is-pinned {
+  background: #5b57d1;
+  box-shadow: 0 0 0 3px #ffffffcc, 0 1px 3px #0004;
+}
+
+.handle-dot:hover {
+  transform: scale(1.25);
+}
+
+/* A finger or pencil gets a 44 px target around the small dot. */
+@media (pointer: coarse) {
+  .handle-dot {
+    position: relative;
+  }
+
+  .handle-dot::before {
+    content: '';
+    position: absolute;
+    inset: -14px;
+    border-radius: 50%;
+  }
+}
+
+.part-menu {
+  position: fixed;
+  min-width: 220px;
+}
+
+.part-menu strong {
+  padding: 4px 10px;
+  font-size: 13px;
+}
+/* #endregion */

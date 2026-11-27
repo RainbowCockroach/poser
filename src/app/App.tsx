@@ -14,13 +14,15 @@ import { Grid, Html, OrbitControls, OrthographicCamera, PerspectiveCamera } from
 import { Box3, MOUSE, PerspectiveCamera as ThreePerspectiveCamera, SRGBColorSpace, TextureLoader, Vector2, Vector3, type Texture } from 'three';
 import { Mannequin } from './Mannequin';
 import { Panel, type Mode, type ViewName } from './Panel';
+import { partName } from './labels';
 import { Help } from './Help';
 import { SceneLights } from './SceneLights';
 import { buildRig, normalizeProfile, type CharacterProfile } from '../core/rig';
 import { CONTROL_FOR_BONE, CONTROLS, copyLimbToOtherSide, forwardKinematics, mirrorPose, solvePose, type Pose } from '../core/pose';
-import { dropToFloor } from '../core/reach';
+import { dropToFloor, type Pin } from '../core/reach';
 import { DEFAULT_LIGHTS, type SceneLight } from '../core/lights';
-import { useDragPosing } from './useDragPosing';
+import { pinOfBone, useDragPosing } from './useDragPosing';
+import { Handles } from './Handles';
 import { PropMeshes, type PropEntry } from './Props';
 import { propBoxes, type SceneProp } from '../core/props';
 import { DEFAULT_LENS_MM, distanceForLens, fieldOfViewDegrees, type CameraView } from '../core/camera';
@@ -115,7 +117,9 @@ export function App() {
   const [selectedLightId, setSelectedLightId] = useState<string | null>(null);
   const [selectedPropId, setSelectedPropId] = useState<string | null>(null);
   const [isFrontView, setIsFrontView] = useState(false);
-  const [isPinFeet, setIsPinFeet] = useState(false);
+  // Pinned hands and feet per character; part of the editing, not of the scene file.
+  const [pins, setPins] = useState<Record<string, Pin[]>>({});
+  const [partMenu, setPartMenu] = useState<{ characterId: string; bone: string; clientX: number; clientY: number } | null>(null);
   const [exportRequest, setExportRequest] = useState<ExportRequest | null>(null);
   const [sceneVersion, setSceneVersion] = useState(0);
   const [lensMm, setLensMm] = useState(DEFAULT_LENS_MM);
@@ -208,6 +212,18 @@ export function App() {
   };
 
   const selected = characters.find((character) => character.id === selectedId) ?? null;
+  const selectedPins = selected ? (pins[selected.id] ?? []) : [];
+  const isPinFeet = selectedPins.includes('foot_l') && selectedPins.includes('foot_r');
+  const togglePin = (characterId: string, pin: Pin) =>
+    setPins((current) => {
+      const list = current[characterId] ?? [];
+      return { ...current, [characterId]: list.includes(pin) ? list.filter((entry) => entry !== pin) : [...list, pin] };
+    });
+  const togglePinFeet = () => {
+    if (!selected) return;
+    const others = selectedPins.filter((pin) => !pin.startsWith('foot'));
+    setPins((current) => ({ ...current, [selected.id]: isPinFeet ? others : [...others, 'foot_l', 'foot_r'] }));
+  };
 
   // The selected character seen from its own front, its left side, its back, or between front and side.
   const lookFrom = (view: ViewName) => {
@@ -242,14 +258,19 @@ export function App() {
     if (isTyping || event.altKey) return;
 
     if (key === 'escape') {
-      if (isHelpOpen) setIsHelpOpen(false);
+      if (partMenu) setPartMenu(null);
+      else if (isHelpOpen) setIsHelpOpen(false);
       else if (isCleanView) setIsCleanView(false);
       else setSelectedControl(null);
       return;
     }
     if (key === '?') return setIsHelpOpen(!isHelpOpen);
     if (key === 'h') return setIsCleanView(!isCleanView);
-    if (key === 'p') return setIsPinFeet(!isPinFeet);
+    if (key === 'p') {
+      const pin = selectedControl ? pinOfBone(Object.values(CONTROLS[selectedControl].motions)[0].bones[0][0]) : null;
+      if (selected && pin) return togglePin(selected.id, pin);
+      return togglePinFeet();
+    }
     if (key === 'n') {
       if (characters.length === 0) return;
       const next = characters[(characters.findIndex((character) => character.id === selectedId) + 1) % characters.length];
@@ -329,7 +350,17 @@ export function App() {
               if (controlName) lookCloser(character, controlName);
             }}
             isFrontView={isFrontView}
-            isPinFeet={isPinFeet}
+            isShowingHandles={mode === 'pose' && !isCleanView}
+            selectedControl={selectedControl}
+            pins={pins}
+            onMenu={(characterId, bone, clientX, clientY) => {
+              setSelectedId(characterId);
+              setSelectedControl(CONTROL_FOR_BONE[bone] ?? null);
+              setPartMenu({ characterId, bone, clientX, clientY });
+            }}
+            onTwist={(id, control, motion, degrees, startPose, gestureKey) =>
+              updateCharacter(id, { pose: { ...startPose, joints: { ...startPose.joints, [control]: { ...startPose.joints?.[control], [motion]: degrees } } } }, gestureKey)
+            }
             exportRequest={exportRequest}
             sceneVersion={sceneVersion}
             lensMm={lensMm}
@@ -351,6 +382,39 @@ export function App() {
           </button>
         )}
       </div>
+      {partMenu && (() => {
+        const character = characters.find((entry) => entry.id === partMenu.characterId);
+        const controlName = CONTROL_FOR_BONE[partMenu.bone];
+        if (!character || !controlName) return null;
+        const pin = pinOfBone(partMenu.bone);
+        const isPinned = !!pin && (pins[character.id] ?? []).includes(pin);
+        const joints = character.pose.joints ?? {};
+        const isSided = /_[lr]$/.test(controlName);
+        const isLeg = /^(hip|knee|ankle|toes)_/.test(controlName);
+        const act = (action: () => void) => () => {
+          action();
+          setPartMenu(null);
+        };
+        return (
+          <>
+            <div className="menu-backdrop" onClick={() => setPartMenu(null)} onContextMenu={(event) => event.preventDefault()} />
+            <div className="menu-list part-menu" style={{ left: Math.min(partMenu.clientX, window.innerWidth - 230), top: Math.min(partMenu.clientY, window.innerHeight - 220) }} role="menu">
+              <strong>{partName(controlName)}</strong>
+              <button onClick={act(() => lookCloser(character, controlName))}>Look closer</button>
+              <button
+                onClick={act(() => {
+                  const { [controlName]: _removed, ...rest } = joints;
+                  updateCharacter(character.id, { pose: { ...character.pose, joints: rest } });
+                })}
+              >
+                Reset this part
+              </button>
+              {isSided && <button onClick={act(() => updateCharacter(character.id, { pose: copyLimbToOtherSide(character.pose, controlName) }))}>Copy this {isLeg ? 'leg' : 'arm'} to the other side</button>}
+              {pin && <button onClick={act(() => togglePin(character.id, pin))}>{isPinned ? 'Unpin' : 'Pin'} this {pin.startsWith('hand') ? 'hand' : 'foot'}</button>}
+            </div>
+          </>
+        );
+      })()}
       {isHelpOpen && (
         <Help
           onClose={() => setIsHelpOpen(false)}
@@ -379,7 +443,9 @@ export function App() {
         isFrontView={isFrontView}
         onToggleFrontView={() => setIsFrontView(!isFrontView)}
         isPinFeet={isPinFeet}
-        onTogglePinFeet={() => setIsPinFeet(!isPinFeet)}
+        onTogglePinFeet={togglePinFeet}
+        pins={selectedPins}
+        onTogglePin={(pin) => selected && togglePin(selected.id, pin)}
         canUndo={scene.past.length > 0}
         canRedo={scene.future.length > 0}
         onTravel={travel}
@@ -445,7 +511,11 @@ interface StageProps {
   isCardFolded: boolean;
   onLookCloser: (character: SceneCharacter, bone: string) => void;
   isFrontView: boolean;
-  isPinFeet: boolean;
+  isShowingHandles: boolean;
+  selectedControl: string | null;
+  pins: Record<string, Pin[]>;
+  onMenu: (characterId: string, bone: string, clientX: number, clientY: number) => void;
+  onTwist: (id: string, control: string, motion: string, degrees: number, startPose: Pose, gestureKey: string) => void;
   exportRequest: ExportRequest | null;
   sceneVersion: number;
   lensMm: number;
@@ -458,7 +528,7 @@ interface StageProps {
 }
 
 function Stage(props: StageProps) {
-  const { characters, lights, background, selected, highlightedBones, isFrontView, isPinFeet, exportRequest, onSelect, onPose } = props;
+  const { characters, lights, background, selected, highlightedBones, isFrontView, exportRequest, onSelect, onPose } = props;
   const viewportHeight = useThree((state) => state.size.height);
   const viewportWidth = useThree((state) => state.size.width);
   // Start far enough back that everyone fits, even on a narrow phone held upright. Later the camera is the user's.
@@ -476,7 +546,7 @@ function Stage(props: StageProps) {
   const threeScene = useThree((state) => state.scene);
   const camera = useThree((state) => state.camera);
   const invalidate = useThree((state) => state.invalidate);
-  const startDrag = useDragPosing(isPinFeet, onPose);
+  const startDrag = useDragPosing(onPose, (character, bone, clientX, clientY) => props.onMenu(character.id, bone, clientX, clientY));
   const isExporting = exportRequest !== null;
   const isShowingGuides = !isExporting || exportRequest.isShowingGuides;
 
@@ -609,13 +679,27 @@ function Stage(props: StageProps) {
             highlightedBones={character.id === selected?.id && !isExporting ? highlightedBones : []}
             onGrab={(grab) => {
               onSelect(character.id, CONTROL_FOR_BONE[grab.bone] ?? null);
-              startDrag(character, grab);
+              startDrag(character, grab, props.pins[character.id] ?? []);
             }}
             onLookCloser={(bone) => {
               onSelect(character.id, CONTROL_FOR_BONE[bone] ?? null);
               props.onLookCloser(character, bone);
             }}
+            onMenu={(bone, clientX, clientY) => props.onMenu(character.id, bone, clientX, clientY)}
           />
+          {character.id === selected?.id && props.isShowingHandles && !isExporting && (
+            <Handles
+              character={character}
+              selectedControl={props.selectedControl}
+              pins={props.pins[character.id] ?? []}
+              onGrab={(grab) => {
+                onSelect(character.id, CONTROL_FOR_BONE[grab.bone] ?? null);
+                startDrag(character, grab, props.pins[character.id] ?? []);
+              }}
+              onMenu={(bone, clientX, clientY) => props.onMenu(character.id, bone, clientX, clientY)}
+              onTwist={(control, motion, degrees, startPose, gestureKey) => props.onTwist(character.id, control, motion, degrees, startPose, gestureKey)}
+            />
+          )}
           {character.reference && <ReferenceImage character={character} isVisible={!isExporting} />}
           {character.id === selected?.id && !props.isCleanView && (
             <Html position={[character.pose.position?.[0] ?? 0, character.profile.heightCm / 100 + 0.12, character.pose.position?.[2] ?? 0]} center className="name-label" zIndexRange={[1, 0]}>

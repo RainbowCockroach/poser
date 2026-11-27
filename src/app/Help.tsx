@@ -5,7 +5,10 @@
 
 // #region Config
 const POINTER_ROWS: { action: string; mouse: string; touch: string }[] = [
-  { action: 'Bend or move a part', mouse: 'Drag it', touch: 'Drag it with one finger or the pencil' },
+  { action: 'Bend or move a part', mouse: 'Drag it or its dot', touch: 'Drag it or its dot with a finger or the pencil' },
+  { action: 'Twist a part', mouse: 'Drag along the ring around it', touch: 'Drag along the ring around it' },
+  { action: 'Turn the character', mouse: 'Drag along the ring on the floor', touch: 'Drag along the ring on the floor' },
+  { action: 'Reset, copy, pin a part', mouse: 'Right-click it', touch: 'Hold it still for a moment' },
   { action: 'Turn the camera', mouse: 'Drag empty space, or middle-drag or Alt-drag anywhere', touch: 'Drag empty space' },
   { action: 'Slide the camera', mouse: 'Right-drag', touch: 'Drag with two fingers' },
   { action: 'Zoom', mouse: 'Scroll wheel, toward the pointer', touch: 'Pinch' },
@@ -21,7 +24,7 @@ const KEY_ROWS: { keys: string[]; action: string }[] = [
   { keys: ['M'], action: 'Copy the arm or leg of the selected part onto the other side' },
   { keys: ['X'], action: 'Flip the pose left to right' },
   { keys: ['G'], action: 'Drop to the floor' },
-  { keys: ['P'], action: 'Pin the feet while the hips move' },
+  { keys: ['P'], action: 'Pin the selected hand or foot (or both feet); pinned ones stay put while the rest moves' },
   { keys: ['N'], action: 'Next character' },
   { keys: ['H'], action: 'Hide the controls for a clean view to draw from' },
   { keys: ['Esc'], action: 'Deselect' },
