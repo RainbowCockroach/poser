@@ -16,11 +16,12 @@ import { Mannequin } from './Mannequin';
 import { Panel, type Mode, type ViewName } from './Panel';
 import { partName } from './labels';
 import { Help } from './Help';
+import { TouchForm, type TouchPick } from './TouchForm';
 import { SceneLights } from './SceneLights';
 import { buildRig, normalizeProfile, type CharacterProfile } from '../core/rig';
 import { CONTROL_FOR_BONE, CONTROLS, copyLimbToOtherSide, forwardKinematics, mirrorPose, solvePose, type Pose } from '../core/pose';
 import { dropToFloor, type Pin } from '../core/reach';
-import { BODY_PARTS, findOverlaps, separate, touch } from '../core/body';
+import { BODY_PARTS, findOverlaps, separate, touch, type TouchSide } from '../core/body';
 import type { Object3D, Vector3 as ThreeVector3 } from 'three';
 import { DEFAULT_LIGHTS, type SceneLight } from '../core/lights';
 import { partOfBone, pinOfBone, useDragPosing, type TouchTarget } from './useDragPosing';
@@ -138,7 +139,7 @@ export function App() {
   const [pins, setPins] = useState<Record<string, Pin[]>>({});
   const [touchTarget, setTouchTarget] = useState<TouchTarget | null>(null);
   const [touchMessage, setTouchMessage] = useState('');
-  const [touchPick, setTouchPick] = useState<{ characterId: string; part: string } | null>(null);
+  const [touchPick, setTouchPick] = useState<TouchPick | null>(null);
   const [isPencilOnly, setIsPencilOnly] = useState(() => {
     try {
       return localStorage.getItem(PENCIL_ONLY_STORAGE_KEY) === 'yes';
@@ -246,7 +247,7 @@ export function App() {
   latestCharacters.current = characters;
 
   // A whole-body lean can take a second or more on a phone; the message shows before the page is busy.
-  const touchOnDrop = (character: SceneCharacter, part: string, target: TouchTarget) => {
+  const touchOnDrop = (character: SceneCharacter, part: string, target: TouchTarget, side: TouchSide = 'nearest') => {
     if (part.startsWith('hand') && target.part.startsWith('hand') && target.characterId !== character.id) return holdHandsWith(character.id, target.characterId);
     const targetName = BODY_PARTS[target.part]?.label.toLowerCase() ?? target.part;
     console.log(`Touch on drop: ${character.profile.name} ${part} → ${target.part} (${target.bone})`);
@@ -257,7 +258,7 @@ export function App() {
       const index = list.findIndex((entry) => entry.id === character.id);
       const targetIndex = list.findIndex((entry) => entry.id === target.characterId);
       try {
-        const touched = touch(posed, index, part, targetIndex, target.part);
+        const touched = touch(posed, index, part, targetIndex, target.part, side);
         updateCharacter(character.id, { pose: touched.pose }, 'touch');
         const gap = Math.round(Math.abs(touched.gapMeters) * 100);
         setTouchMessage(gap < 1 ? '' : `Got within ${gap} cm of the ${targetName}; the joints can't reach further.`);
@@ -302,15 +303,38 @@ export function App() {
     setTouchMessage(after === 0 ? `Pulled ${before === 1 ? 'a body part' : `${before} body parts`} back out.` : `${after} left that the joints can't pull out further.`);
   };
 
-  // A picked body part touches the part clicked next; a hand picked on someone else's hand means holding hands.
+  // The touch form starts on the nearest part of the nearest other character (or the character itself when alone).
+  const startTouch = (characterId: string, part: string) => {
+    const list = latestCharacters.current;
+    const source = list.find((entry) => entry.id === characterId);
+    if (!source) return;
+    const worldOf = (character: SceneCharacter) => forwardKinematics(buildRig(character.profile), solvePose(character.pose));
+    const from = worldOf(source)[BODY_PARTS[part]?.bone ?? 'wrist_r'].position;
+    const others = list.filter((entry) => entry.id !== characterId);
+    let best = { characterId, part: part === 'head' ? 'chest' : 'head', distance: Infinity };
+    for (const other of others) {
+      const world = worldOf(other);
+      for (const [name, bodyPart] of Object.entries(BODY_PARTS)) {
+        const distance = world[bodyPart.bone].position.distanceTo(from);
+        if (distance < best.distance) best = { characterId: other.id, part: name, distance };
+      }
+    }
+    setTouchPick({ characterId, part, targetCharacterId: best.characterId, targetPart: best.part, side: 'nearest' });
+  };
+
+  const runTouch = (pick: TouchPick) => {
+    setTouchPick(null);
+    const source = latestCharacters.current.find((entry) => entry.id === pick.characterId);
+    if (!source) return;
+    const isHandToOtherHand = pick.part.startsWith('hand') && pick.targetPart.startsWith('hand') && pick.targetCharacterId !== source.id;
+    if (isHandToOtherHand) return holdHandsWith(source.id, pick.targetCharacterId);
+    touchOnDrop(source, pick.part, { characterId: pick.targetCharacterId, bone: BODY_PARTS[pick.targetPart]?.bone ?? '', part: pick.targetPart }, pick.side);
+  };
+
+  // Clicking a part on the stage while the touch form is open picks it as the target and touches right away.
   const finishTouchPick = (characterId: string, object: Object3D, point: ThreeVector3) => {
     if (!touchPick) return;
-    setTouchPick(null);
-    const part = partOfBone(object, point);
-    const source = latestCharacters.current.find((entry) => entry.id === touchPick.characterId);
-    if (!source) return;
-    if (touchPick.part.startsWith('hand') && part.startsWith('hand') && characterId !== source.id) return holdHandsWith(source.id, characterId);
-    touchOnDrop(source, touchPick.part, { characterId, bone: object.userData.bone, part });
+    runTouch({ ...touchPick, targetCharacterId: characterId, targetPart: partOfBone(object, point), side: 'nearest' });
   };
 
   const removeCharacter = (id: string) => {
@@ -514,12 +538,7 @@ export function App() {
             onPose={(id, pose, gestureKey) => updateCharacter(id, { pose }, gestureKey)}
           />
         </Canvas>
-        {touchPick && !isCleanView && (
-          <div className="stage-notice" role="status">
-            Click the part {characters.find((entry) => entry.id === touchPick.characterId)?.profile.name}'s {BODY_PARTS[touchPick.part]?.label.toLowerCase() ?? touchPick.part} should touch
-            <button onClick={() => setTouchPick(null)}>Cancel</button>
-          </div>
-        )}
+        {touchPick && !isCleanView && <TouchForm characters={characters} pick={touchPick} onChange={setTouchPick} onTouch={() => runTouch(touchPick)} onCancel={() => setTouchPick(null)} />}
         {touchMessage && !touchPick && !isCleanView && (
           <div className="stage-notice" role="status">
             {touchMessage}
@@ -566,15 +585,7 @@ export function App() {
               </button>
               {isSided && <button onClick={act(() => updateCharacter(character.id, { pose: copyLimbToOtherSide(character.pose, controlName) }))}>Copy this {isLeg ? 'leg' : 'arm'} to the other side</button>}
               {pin && <button onClick={act(() => togglePin(character.id, pin))}>{isPinned ? 'Unpin' : 'Pin'} this {pin.startsWith('hand') ? 'hand' : 'foot'}</button>}
-              <button onClick={act(() => setTouchPick({ characterId: character.id, part: partForControl(controlName) }))}>Touch another part…</button>
-              {pin?.startsWith('hand') &&
-                characters
-                  .filter((other) => other.id !== character.id)
-                  .map((other) => (
-                    <button key={other.id} onClick={act(() => holdHandsWith(character.id, other.id))}>
-                      Hold hands with {other.profile.name}
-                    </button>
-                  ))}
+              <button onClick={act(() => startTouch(character.id, partForControl(controlName)))}>Touch…</button>
               <button onClick={act(() => fixOverlaps(character))}>Pull sunk-in parts out</button>
               <hr />
               <button onClick={act(() => toggleLock(character.id))}>Lock {character.profile.name}</button>
@@ -648,8 +659,7 @@ export function App() {
           setSelectedId(id);
           setSelectedControl(null);
         }}
-        onStartTouchPick={(part) => selected && setTouchPick({ characterId: selected.id, part })}
-        onHoldHands={(otherId) => selected && holdHandsWith(selected.id, otherId)}
+        onStartTouch={(part) => selected && startTouch(selected.id, part)}
         onFixOverlaps={() => selected && fixOverlaps(selected)}
         onToggleLock={toggleLock}
         onSelectControl={setSelectedControl}

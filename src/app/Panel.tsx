@@ -13,7 +13,6 @@ import { CONTROLS, copyLimbToOtherSide, mirrorPose, type Pose, type PoseFile } f
 import { dropToFloor, type Pin } from '../core/reach';
 import { MAX_SHARE_LINK_LENGTH, packForLink, readShareHash, shareLink, unpackFromLink, type SharedKind } from '../core/share';
 import { applyHandShape, HAND_SHAPES, type HandSide } from '../core/hands';
-import { BODY_PARTS, findOverlaps, separate, touch, type PosedCharacter, type TouchSide } from '../core/body';
 import { buildRig, DEFAULT_PROFILE, normalizeProfile, type CharacterProfile } from '../core/rig';
 import { DEFAULT_LIGHTS, LIGHT_PRESETS, MAX_INTENSITY, newLight, normalizeLight, placementOf, positionFromPlacement, type LightKind, type LightPlacement, type SceneLight } from '../core/lights';
 import { newProp, normalizeProp, PROP_KINDS, propBoxes, MAX_PROP_SIZE, MIN_PROP_SIZE, type PropKind } from '../core/props';
@@ -65,7 +64,6 @@ const PROPORTION_SLIDERS: { key: keyof CharacterProfile['proportions']; label: s
   { key: 'hipWidth', label: 'Hip width', min: 0.6, max: 1.8, step: 0.05 },
 ];
 
-const TOUCH_SIDES: TouchSide[] = ['nearest', 'front', 'back', 'left', 'right'];
 const HAND_SIDES: { side: HandSide; label: string }[] = [
   { side: 'both', label: 'Both hands' },
   { side: 'l', label: 'Left hand' },
@@ -130,8 +128,7 @@ interface PanelProps {
   onReplaceScene: (scene: SceneState, camera?: CameraView) => void;
   onAddCharacter: (profile: CharacterProfile) => void;
   onRemoveCharacter: (id: string) => void;
-  onStartTouchPick: (part: string) => void;
-  onHoldHands: (otherId: string) => void;
+  onStartTouch: (part: string) => void;
   onFixOverlaps: () => void;
   onToggleLock: (id: string) => void;
 }
@@ -579,19 +576,10 @@ function PoseCard(props: PoseCardProps) {
               Done
             </button>
           </div>
-          <h3>Touch</h3>
           <div className="row">
-            <button onClick={() => props.onStartTouchPick(partForControl(selectedControl))} title="Then click the body part to touch, on any character">
-              Touch another part…
+            <button onClick={() => props.onStartTouch(partForControl(selectedControl))} title="Pick what this part should touch, from a list or by clicking it">
+              Touch…
             </button>
-            {isHandPart &&
-              props.characters
-                .filter((other) => other.id !== selected.id)
-                .map((other) => (
-                  <button key={other.id} onClick={() => props.onHoldHands(other.id)}>
-                    Hold hands with {other.profile.name}
-                  </button>
-                ))}
           </div>
         </>
       ) : (
@@ -628,7 +616,11 @@ function PoseCard(props: PoseCardProps) {
               <Tile key={name} label={shape.label} request={handPicture(profile, name)} onClick={() => setPose(applyHandShape(pose, 'both', name))} />
             ))}
           </div>
-          <TouchEditor key={selected.id} characters={props.characters} selected={selected} onUpdateCharacter={onUpdateCharacter} />
+          <div className="row">
+            <button onClick={() => props.onStartTouch('hand_r')} title="Put one body part on another, of this character or someone else">
+              Touch…
+            </button>
+          </div>
         </>
       )}
 
@@ -835,107 +827,6 @@ function BodyCard({ selected, onUpdateCharacter, onRemoveCharacter, onShareChara
         </button>
       </div>
     </>
-  );
-}
-
-// Touching and overlaps run the solver in core/body.ts; overlaps are only checked while this section is open.
-function TouchEditor({ characters, selected, onUpdateCharacter }: { characters: SceneCharacter[]; selected: SceneCharacter; onUpdateCharacter: PanelProps['onUpdateCharacter'] }) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [part, setPart] = useState('hand_r');
-  const [targetId, setTargetId] = useState(selected.id);
-  const [targetPart, setTargetPart] = useState('knee_l');
-  const [side, setSide] = useState<TouchSide>('nearest');
-  const [result, setResult] = useState('');
-  const posed: PosedCharacter[] = characters.map((character) => ({ name: character.profile.name, rig: buildRig(character.profile), pose: character.pose }));
-  const index = characters.findIndex((character) => character.id === selected.id);
-  const targetIndex = Math.max(0, characters.findIndex((character) => character.id === targetId));
-  const overlaps = isOpen ? findOverlaps(posed).filter((overlap) => overlap.character === index || overlap.otherCharacter === index) : [];
-  const partLabel = (name: string) => BODY_PARTS[name]?.label.toLowerCase() ?? name.replace(/_/g, ' ');
-
-  const [isWorking, setIsWorking] = useState(false);
-
-  // Bending the whole body over takes a second or more on a phone; show that before the page freezes for the solve.
-  const touchNow = () => {
-    setIsWorking(true);
-    setResult('Bending…');
-    setTimeout(() => {
-      try {
-        const touched = touch(posed, index, part, targetIndex, targetPart, side);
-        onUpdateCharacter(selected.id, { pose: touched.pose });
-        const gap = Math.round(Math.abs(touched.gapMeters) * 100);
-        if (gap < 1) setResult('Touching.');
-        else if (touched.gapMeters < 0) setResult(`Ended ${gap} cm inside; the joints can't pull back further. Try another side.`);
-        else setResult(`Got within ${gap} cm; the joints can't reach further. Move the character closer and try again.`);
-      } catch (error) {
-        setResult((error as Error).message);
-      }
-      setIsWorking(false);
-    }, 50);
-  };
-
-  return (
-    <details onToggle={(event) => setIsOpen(event.currentTarget.open)}>
-      <summary>Touch another body part</summary>
-      <label className="field">
-        Put the
-        <select value={part} onChange={(event) => setPart(event.target.value)}>
-          {Object.entries(BODY_PARTS).map(([name, bodyPart]) => (
-            <option key={name} value={name}>
-              {bodyPart.label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="field">
-        on
-        <select value={characters[targetIndex]?.id ?? selected.id} onChange={(event) => setTargetId(event.target.value)}>
-          {characters.map((character) => (
-            <option key={character.id} value={character.id}>
-              {character.id === selected.id ? `${character.profile.name} (itself)` : character.profile.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <div className="row">
-        <select value={targetPart} onChange={(event) => setTargetPart(event.target.value)} aria-label="Body part to touch">
-          {Object.entries(BODY_PARTS).map(([name, bodyPart]) => (
-            <option key={name} value={name}>
-              {bodyPart.label}
-            </option>
-          ))}
-        </select>
-        <select value={side} onChange={(event) => setSide(event.target.value as TouchSide)} aria-label="Side">
-          {TOUCH_SIDES.map((name) => (
-            <option key={name} value={name}>
-              {name === 'nearest' ? 'nearest side' : `${name} side`}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className="row">
-        <button onClick={touchNow} disabled={isWorking}>
-          Touch
-        </button>
-      </div>
-      {result && <p className="hint">{result}</p>}
-
-      <p className="hint">
-        {overlaps.length === 0
-          ? 'No body parts sink into each other.'
-          : overlaps
-              .slice(0, 4)
-              .map((overlap) => {
-                const owner = (characterIndex: number) => (characterIndex === index ? '' : `${characters[characterIndex].profile.name}'s `);
-                return `${owner(overlap.character)}${partLabel(overlap.part)} is ${Math.max(1, Math.round(overlap.depthMeters * 100))} cm inside ${owner(overlap.otherCharacter)}${partLabel(overlap.otherPart)}`;
-              })
-              .join('; ')}
-      </p>
-      <div className="row">
-        <button disabled={overlaps.length === 0} onClick={() => onUpdateCharacter(selected.id, { pose: separate(posed, index) })} title="Bend the limbs of this character out of bodies they sink into">
-          Fix overlaps
-        </button>
-      </div>
-    </details>
   );
 }
 

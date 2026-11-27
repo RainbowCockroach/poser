@@ -29,10 +29,9 @@ npm run poser -- help   # CLI for agents: render, touch, check, pose (see AGENTS
 - Pictures: poses, hand shapes, lenses and light presets are tiles drawn on the selected character.
 - Poses: presets in `poses/*.pose.json`, plus "My poses" saved in the browser and shareable as `.pose.json`.
 - Hands: one tap for a fist, point, peace sign, grip or pinch, on one hand or both.
-- Touch: select a part, press "Touch another part…" (card or right-click menu), then click the part to touch, on
-  any character. Or drag a hand close to a body part until it lights up and let go.
-- Hold hands: select a hand and press "Hold hands with …", or drag it onto the other hand. Both characters reach,
-  palms meet and the fingers close (CLI: `hold`).
+- Touch: press "Touch…" (card or right-click menu) and pick both parts from the lists, on any character, or click
+  the part to touch on the stage. Or drag a hand close to a body part until it lights up and let go.
+- A hand touching another character's hand holds it: both reach, palms meet and the fingers close (CLI: `hold`).
 - Lock a character (Pose card, right-click menu or L) so clicks and drags pass it by; its name at the top unlocks or
   removes it. Remove a character with Delete, the right-click menu or the Pose card; undo brings it back.
 - Touch: put a hand on a knee or a foot (the body bends over if it has to), a chest on someone's back; "Fix overlaps" pulls limbs out of bodies.
