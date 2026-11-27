@@ -60,14 +60,15 @@ export const HAND_SHAPES: Record<string, HandShape> = {
     label: 'Peace',
     fingers: { thumb: { cmc_flexion: 40, cmc_abduction: 10, cmc_opposition: -5, mcp_flexion: -10, ip_flexion: 35 }, index: { spread: 12 }, middle: { spread: -12 }, ring: CURLED, pinky: CURLED },
   },
+  // Fitted around a handle about 4.5 cm thick that crosses the palm slightly diagonally, as in holding a hammer.
   grip: {
     label: 'Grip',
     fingers: {
-      thumb: { cmc_flexion: 40, cmc_abduction: 35, ip_flexion: 35 },
-      index: { base_flexion: 55, middle_flexion: 70 },
-      middle: { base_flexion: 60, middle_flexion: 75 },
-      ring: { base_flexion: 65, middle_flexion: 80 },
-      pinky: { base_flexion: 70, middle_flexion: 85 },
+      thumb: { cmc_flexion: 20, cmc_abduction: 10, cmc_opposition: 35, mcp_flexion: 10, ip_flexion: -15 },
+      index: { base_flexion: 37.5, middle_flexion: 50 },
+      middle: { base_flexion: 50, middle_flexion: 60 },
+      ring: { base_flexion: 60, middle_flexion: 52.5 },
+      pinky: { base_flexion: 60, middle_flexion: 35 },
     },
   },
   pinch: {

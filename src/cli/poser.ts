@@ -16,6 +16,7 @@ import { dropToFloor } from '../core/reach.ts';
 import type { Pose, PoseFile } from '../core/pose.ts';
 import { DEFAULT_LIGHTS, normalizeLight, type SceneLight } from '../core/lights.ts';
 import { BODY_PARTS, findOverlaps, separate, touch, type PosedCharacter, type TouchSide } from '../core/body.ts';
+import { holdHands } from '../core/holding.ts';
 import { MAX_SHARE_LINK_LENGTH } from '../core/share.ts';
 import { applyHandShape, HAND_SHAPES, type HandSide } from '../core/hands.ts';
 import { normalizeView, type CameraView } from '../core/camera.ts';
@@ -27,7 +28,7 @@ import { encodePng } from './png.ts';
 // #region Types and config
 interface SceneFile {
   format: 'poser.scene/1';
-  characters: { profile: CharacterProfile; pose: Pose }[];
+  characters: { profile: CharacterProfile; pose: Pose; locked?: boolean }[];
   props?: SceneProp[];
   lights?: SceneLight[];
   background?: string;
@@ -50,7 +51,7 @@ interface Command {
   run: (args: Arguments) => CommandResult;
 }
 
-const VERSION = '0.7.0';
+const VERSION = '0.8.0';
 const SITE_URL = 'https://rainbowcockroach.github.io/poser/';
 const DEFAULT_BACKGROUND = '#eef0f5';
 const POSES_FOLDER = new URL('../../poses/', import.meta.url);
@@ -172,6 +173,26 @@ const COMMANDS: Record<string, Command> = {
       const out = writeScene(scene, args);
       const gapText = Math.abs(result.gapMeters) < 0.01 ? 'touching' : `still ${Math.round(Math.abs(result.gapMeters) * 100)} cm ${result.gapMeters > 0 ? 'apart' : 'inside'} (out of reach with these joint limits)`;
       return { text: `${posed[index].name} ${args.part} → ${posed[targetIndex].name} ${args.target_part}: ${gapText}. Wrote ${out}\nPose: ${JSON.stringify(result.pose)}` };
+    },
+  },
+
+  hold: {
+    summary: 'Two characters hold hands: both reach, palms meet, fingers close. A locked character stays still. Edits the scene file.',
+    positional: ['scene', 'character', 'other'],
+    options: { out: 'string' },
+    run: (args) => {
+      const scene = readScene(args);
+      const posed = posedCharacters(scene);
+      const index = characterIndex(scene, args.character);
+      const otherIndex = characterIndex(scene, args.other);
+      if (index === otherIndex) throw new Error('A character can\'t hold its own hand; name two characters');
+      const canMove: [boolean, boolean] = [!scene.characters[index].locked, !scene.characters[otherIndex].locked];
+      const result = holdHands(posed, index, otherIndex, canMove);
+      scene.characters[index].pose = result.poses[0];
+      scene.characters[otherIndex].pose = result.poses[1];
+      const out = writeScene(scene, args);
+      const gapText = result.gapMeters < 0.02 ? 'holding hands' : `hands still ${Math.round(result.gapMeters * 100)} cm apart (move them closer)`;
+      return { text: `${posed[index].name} (${result.sides[0] === 'l' ? 'left' : 'right'} hand) and ${posed[otherIndex].name} (${result.sides[1] === 'l' ? 'left' : 'right'} hand): ${gapText}. Wrote ${out}` };
     },
   },
 

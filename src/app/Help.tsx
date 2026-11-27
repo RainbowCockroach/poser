@@ -9,7 +9,8 @@ const POINTER_ROWS: { action: string; mouse: string; touch: string }[] = [
   { action: 'Twist a part', mouse: 'Drag along the ring around it', touch: 'Drag along the ring around it' },
   { action: 'Turn the character', mouse: 'Drag along the ring on the floor', touch: 'Drag along the ring on the floor' },
   { action: 'Reset, copy, pin a part', mouse: 'Right-click it', touch: 'Hold it still for a moment' },
-  { action: 'Make a hand touch a part', mouse: 'Drag the hand close to it; let go when it lights up', touch: 'The same' },
+  { action: 'Make a part touch another', mouse: 'Select it, press "Touch another part…", click the other part', touch: 'The same, or drag a hand close until the part lights up' },
+  { action: 'Hold hands', mouse: 'Select a hand, press "Hold hands with …", or drag it onto the other hand', touch: 'The same' },
   { action: 'Turn the camera', mouse: 'Drag empty space, or middle-drag or Alt-drag anywhere', touch: 'Drag empty space' },
   { action: 'Slide the camera', mouse: 'Right-drag', touch: 'Drag with two fingers' },
   { action: 'Zoom', mouse: 'Scroll wheel, toward the pointer', touch: 'Pinch' },
@@ -27,6 +28,8 @@ const KEY_ROWS: { keys: string[]; action: string }[] = [
   { keys: ['G'], action: 'Drop to the floor' },
   { keys: ['P'], action: 'Pin the selected hand or foot (or both feet); pinned ones stay put while the rest moves' },
   { keys: ['N'], action: 'Next character' },
+  { keys: ['L'], action: 'Lock the selected character (unlock it from its name at the top)' },
+  { keys: ['Delete'], action: 'Remove the selected character (undo brings it back)' },
   { keys: ['H'], action: 'Hide the controls for a clean view to draw from' },
   { keys: ['Esc'], action: 'Deselect' },
 ];

@@ -21,8 +21,10 @@ import { buildRig, normalizeProfile, type CharacterProfile } from '../core/rig';
 import { CONTROL_FOR_BONE, CONTROLS, copyLimbToOtherSide, forwardKinematics, mirrorPose, solvePose, type Pose } from '../core/pose';
 import { dropToFloor, type Pin } from '../core/reach';
 import { BODY_PARTS, findOverlaps, separate, touch } from '../core/body';
+import type { Object3D, Vector3 as ThreeVector3 } from 'three';
 import { DEFAULT_LIGHTS, type SceneLight } from '../core/lights';
-import { pinOfBone, useDragPosing, type TouchTarget } from './useDragPosing';
+import { partOfBone, pinOfBone, useDragPosing, type TouchTarget } from './useDragPosing';
+import { holdHands } from '../core/holding';
 import { Handles } from './Handles';
 import { PropMeshes, type PropEntry } from './Props';
 import { propBoxes, type SceneProp } from '../core/props';
@@ -36,6 +38,8 @@ export interface SceneCharacter {
   profile: CharacterProfile;
   pose: Pose;
   reference?: { url: string; opacity: number };
+  // A locked character can't be selected, dragged or posed until it is unlocked; it can still be removed.
+  isLocked?: boolean;
 }
 
 export interface LightEntry extends SceneLight {
@@ -52,7 +56,7 @@ export interface SceneState {
 
 export interface SceneFile {
   format: 'poser.scene/1';
-  characters: { profile: CharacterProfile; pose: Pose }[];
+  characters: { profile: CharacterProfile; pose: Pose; locked?: boolean }[];
   props?: SceneProp[];
   lights?: SceneLight[];
   background?: string;
@@ -86,8 +90,15 @@ const THREE_QUARTER_DEGREES = 35;
 const PENCIL_ONLY_STORAGE_KEY = 'poser.pencilOnly';
 // The click a lifted finger makes arrives within this long after it lifts.
 const MENU_SETTLE_MILLISECONDS = 350;
-// Overlaps are checked this long after the last change, not on every frame of a drag.
-const OVERLAP_CHECK_MILLISECONDS = 400;
+// About the part menu's height with every item, so it opens upward near the bottom of the window.
+const PART_MENU_HEIGHT_PIXELS = 440;
+// The body part a selected control stands for when it is asked to touch something.
+const PART_FOR_CONTROL: Record<string, string> = {
+  wrist: 'hand', thumb: 'hand', index: 'hand', middle: 'hand', ring: 'hand', pinky: 'hand',
+  elbow: 'forearm', shoulder: 'upper_arm', shoulder_girdle: 'shoulder',
+  hip: 'thigh', knee: 'knee', ankle: 'foot', toes: 'foot',
+  neck: 'head', thoracic: 'chest', lumbar: 'belly', pelvis: 'hips',
+};
 // On screens wider than phones the mode rail and the card float over the stage; these match styles.css (rail and card plus gaps).
 const WIDE_STAGE_PIXELS = 760;
 const RAIL_SPACE_PIXELS = 94;
@@ -127,7 +138,7 @@ export function App() {
   const [pins, setPins] = useState<Record<string, Pin[]>>({});
   const [touchTarget, setTouchTarget] = useState<TouchTarget | null>(null);
   const [touchMessage, setTouchMessage] = useState('');
-  const [overlapCount, setOverlapCount] = useState(0);
+  const [touchPick, setTouchPick] = useState<{ characterId: string; part: string } | null>(null);
   const [isPencilOnly, setIsPencilOnly] = useState(() => {
     try {
       return localStorage.getItem(PENCIL_ONLY_STORAGE_KEY) === 'yes';
@@ -236,6 +247,7 @@ export function App() {
 
   // A whole-body lean can take a second or more on a phone; the message shows before the page is busy.
   const touchOnDrop = (character: SceneCharacter, part: string, target: TouchTarget) => {
+    if (part.startsWith('hand') && target.part.startsWith('hand') && target.characterId !== character.id) return holdHandsWith(character.id, target.characterId);
     const targetName = BODY_PARTS[target.part]?.label.toLowerCase() ?? target.part;
     console.log(`Touch on drop: ${character.profile.name} ${part} → ${target.part} (${target.bone})`);
     setTouchMessage(`Touching the ${targetName}…`);
@@ -261,15 +273,62 @@ export function App() {
     return () => clearTimeout(timer);
   }, [touchMessage]);
 
-  useEffect(() => {
-    if (!selected) return setOverlapCount(0);
-    const timer = setTimeout(() => {
-      const posed = characters.map((entry) => ({ name: entry.profile.name, rig: buildRig(entry.profile), pose: entry.pose }));
-      const index = characters.findIndex((entry) => entry.id === selected.id);
-      setOverlapCount(findOverlaps(posed).filter((overlap) => overlap.character === index || overlap.otherCharacter === index).length);
-    }, OVERLAP_CHECK_MILLISECONDS);
-    return () => clearTimeout(timer);
-  }, [characters, selected?.id]);
+  const posedList = (list: SceneCharacter[]) => list.map((entry) => ({ name: entry.profile.name, rig: buildRig(entry.profile), pose: entry.pose }));
+
+  const holdHandsWith = (characterId: string, otherId: string) => {
+    setTouchMessage('Holding hands…');
+    setTimeout(() => {
+      const list = latestCharacters.current;
+      const index = list.findIndex((entry) => entry.id === characterId);
+      const otherIndex = list.findIndex((entry) => entry.id === otherId);
+      if (index < 0 || otherIndex < 0) return setTouchMessage('');
+      const result = holdHands(posedList(list), index, otherIndex, [!list[index].isLocked, !list[otherIndex].isLocked]);
+      changeCharacters(
+        (current) => current.map((entry) => (entry.id === characterId ? { ...entry, pose: result.poses[0] } : entry.id === otherId ? { ...entry, pose: result.poses[1] } : entry)),
+        'hold',
+      );
+      setTouchMessage(result.gapMeters < 0.02 ? '' : `The hands are still ${Math.round(result.gapMeters * 100)} cm apart; move the two closer and try again.`);
+    }, 30);
+  };
+
+  const fixOverlaps = (character: SceneCharacter) => {
+    const list = latestCharacters.current;
+    const index = list.findIndex((entry) => entry.id === character.id);
+    const before = findOverlaps(posedList(list)).filter((overlap) => overlap.character === index || overlap.otherCharacter === index).length;
+    if (before === 0) return setTouchMessage(`Nothing of ${character.profile.name} sinks into a body.`);
+    const pose = separate(posedList(list), index);
+    updateCharacter(character.id, { pose }, 'separate');
+    const after = findOverlaps(posedList(list.map((entry) => (entry.id === character.id ? { ...entry, pose } : entry)))).filter((overlap) => overlap.character === index || overlap.otherCharacter === index).length;
+    setTouchMessage(after === 0 ? `Pulled ${before === 1 ? 'a body part' : `${before} body parts`} back out.` : `${after} left that the joints can't pull out further.`);
+  };
+
+  // A picked body part touches the part clicked next; a hand picked on someone else's hand means holding hands.
+  const finishTouchPick = (characterId: string, object: Object3D, point: ThreeVector3) => {
+    if (!touchPick) return;
+    setTouchPick(null);
+    const part = partOfBone(object, point);
+    const source = latestCharacters.current.find((entry) => entry.id === touchPick.characterId);
+    if (!source) return;
+    if (touchPick.part.startsWith('hand') && part.startsWith('hand') && characterId !== source.id) return holdHandsWith(source.id, characterId);
+    touchOnDrop(source, touchPick.part, { characterId, bone: object.userData.bone, part });
+  };
+
+  const removeCharacter = (id: string) => {
+    changeCharacters((list) => list.filter((character) => character.id !== id), 'remove');
+    if (selectedId === id) setSelectedId(characters.find((character) => character.id !== id && !character.isLocked)?.id ?? null);
+    setSelectedControl(null);
+    setTouchPick(null);
+  };
+
+  const toggleLock = (id: string) => {
+    const character = characters.find((entry) => entry.id === id);
+    if (!character) return;
+    updateCharacter(id, { isLocked: !character.isLocked }, 'lock');
+    if (character.isLocked) return;
+    if (selectedId === id) setSelectedId(characters.find((entry) => entry.id !== id && !entry.isLocked)?.id ?? null);
+    setSelectedControl(null);
+  };
+
   const isPinFeet = selectedPins.includes('foot_l') && selectedPins.includes('foot_r');
   const togglePin = (characterId: string, pin: Pin) =>
     setPins((current) => {
@@ -315,7 +374,8 @@ export function App() {
     if (isTyping || event.altKey) return;
 
     if (key === 'escape') {
-      if (partMenu) setPartMenu(null);
+      if (touchPick) setTouchPick(null);
+      else if (partMenu) setPartMenu(null);
       else if (isHelpOpen) setIsHelpOpen(false);
       else if (isCleanView) setIsCleanView(false);
       else setSelectedControl(null);
@@ -329,8 +389,9 @@ export function App() {
       return togglePinFeet();
     }
     if (key === 'n') {
-      if (characters.length === 0) return;
-      const next = characters[(characters.findIndex((character) => character.id === selectedId) + 1) % characters.length];
+      const unlocked = characters.filter((character) => !character.isLocked);
+      if (unlocked.length === 0) return;
+      const next = unlocked[(unlocked.findIndex((character) => character.id === selectedId) + 1) % unlocked.length];
       setSelectedId(next.id);
       setSelectedControl(null);
       return;
@@ -340,7 +401,16 @@ export function App() {
       if (!selected || event.shiftKey) return frameAll();
       return frame(bonePoints(selected));
     }
+    if (key === 'delete' || key === 'backspace') {
+      if (mode === 'scene' && selectedPropId) {
+        changeScene((state) => ({ ...state, sceneProps: state.sceneProps.filter((prop) => prop.id !== selectedPropId) }), 'props:remove');
+        return setSelectedPropId(null);
+      }
+      if (selected) removeCharacter(selected.id);
+      return;
+    }
     if (!selected) return;
+    if (key === 'l') return toggleLock(selected.id);
 
     const joints = selected.pose.joints ?? {};
     const view = ({ '1': 'front', '2': 'side', '3': 'back', '4': 'three-quarter' } as Record<string, ViewName>)[key];
@@ -380,6 +450,7 @@ export function App() {
           frameloop="demand"
           dpr={[1, 2]}
           onPointerMissed={() => {
+            setTouchPick(null);
             setSelectedControl(null);
             const now = performance.now();
             if (now - lastMissedClick.current < DOUBLE_CLICK_MILLISECONDS) frameAll();
@@ -409,6 +480,8 @@ export function App() {
             isFrontView={isFrontView}
             isShowingHandles={mode === 'pose' && !isCleanView}
             touchTarget={touchTarget}
+            isPicking={touchPick !== null}
+            onPick={finishTouchPick}
             isPencilOnly={isPencilOnly}
             onTouchTarget={setTouchTarget}
             onTouchDrop={touchOnDrop}
@@ -441,19 +514,15 @@ export function App() {
             onPose={(id, pose, gestureKey) => updateCharacter(id, { pose }, gestureKey)}
           />
         </Canvas>
-        {(touchMessage || (overlapCount > 0 && mode === 'pose' && selected)) && !isCleanView && (
+        {touchPick && !isCleanView && (
           <div className="stage-notice" role="status">
-            {touchMessage || `${selected?.profile.name}: ${overlapCount === 1 ? 'a body part sinks' : `${overlapCount} body parts sink`} into another`}
-            {!touchMessage && selected && (
-              <button
-                onClick={() => {
-                  const posed = characters.map((entry) => ({ name: entry.profile.name, rig: buildRig(entry.profile), pose: entry.pose }));
-                  updateCharacter(selected.id, { pose: separate(posed, characters.indexOf(selected)) }, 'separate');
-                }}
-              >
-                Fix
-              </button>
-            )}
+            Click the part {characters.find((entry) => entry.id === touchPick.characterId)?.profile.name}'s {BODY_PARTS[touchPick.part]?.label.toLowerCase() ?? touchPick.part} should touch
+            <button onClick={() => setTouchPick(null)}>Cancel</button>
+          </div>
+        )}
+        {touchMessage && !touchPick && !isCleanView && (
+          <div className="stage-notice" role="status">
+            {touchMessage}
           </div>
         )}
         {isCleanView && (
@@ -484,7 +553,7 @@ export function App() {
               }}
               onContextMenu={(event) => event.preventDefault()}
             />
-            <div className="menu-list part-menu" style={{ left: Math.min(partMenu.clientX, window.innerWidth - 230), top: Math.min(partMenu.clientY, window.innerHeight - 220) }} role="menu">
+            <div className="menu-list part-menu" style={{ left: Math.min(partMenu.clientX, window.innerWidth - 240), top: Math.max(8, Math.min(partMenu.clientY, window.innerHeight - PART_MENU_HEIGHT_PIXELS)) }} role="menu">
               <strong>{partName(controlName)}</strong>
               <button onClick={act(() => lookCloser(character, controlName))}>Look closer</button>
               <button
@@ -497,6 +566,21 @@ export function App() {
               </button>
               {isSided && <button onClick={act(() => updateCharacter(character.id, { pose: copyLimbToOtherSide(character.pose, controlName) }))}>Copy this {isLeg ? 'leg' : 'arm'} to the other side</button>}
               {pin && <button onClick={act(() => togglePin(character.id, pin))}>{isPinned ? 'Unpin' : 'Pin'} this {pin.startsWith('hand') ? 'hand' : 'foot'}</button>}
+              <button onClick={act(() => setTouchPick({ characterId: character.id, part: partForControl(controlName) }))}>Touch another part…</button>
+              {pin?.startsWith('hand') &&
+                characters
+                  .filter((other) => other.id !== character.id)
+                  .map((other) => (
+                    <button key={other.id} onClick={act(() => holdHandsWith(character.id, other.id))}>
+                      Hold hands with {other.profile.name}
+                    </button>
+                  ))}
+              <button onClick={act(() => fixOverlaps(character))}>Pull sunk-in parts out</button>
+              <hr />
+              <button onClick={act(() => toggleLock(character.id))}>Lock {character.profile.name}</button>
+              <button className="danger" onClick={act(() => removeCharacter(character.id))}>
+                Remove {character.profile.name}
+              </button>
             </div>
           </>
         );
@@ -560,9 +644,14 @@ export function App() {
         onChangeBackground={(color) => changeScene((state) => ({ ...state, background: color }), 'background')}
         onExport={setExportRequest}
         onSelectCharacter={(id) => {
+          if (characters.find((character) => character.id === id)?.isLocked) return;
           setSelectedId(id);
           setSelectedControl(null);
         }}
+        onStartTouchPick={(part) => selected && setTouchPick({ characterId: selected.id, part })}
+        onHoldHands={(otherId) => selected && holdHandsWith(selected.id, otherId)}
+        onFixOverlaps={() => selected && fixOverlaps(selected)}
+        onToggleLock={toggleLock}
         onSelectControl={setSelectedControl}
         onUpdateCharacter={updateCharacter}
         onReplaceScene={(next, camera) => {
@@ -581,11 +670,7 @@ export function App() {
           setSelectedId(added.id);
           setSelectedControl(null);
         }}
-        onRemoveCharacter={(id) => {
-          changeCharacters((list) => list.filter((character) => character.id !== id), 'remove');
-          setSelectedId(characters.find((character) => character.id !== id)?.id ?? null);
-          setSelectedControl(null);
-        }}
+        onRemoveCharacter={removeCharacter}
       />
     </div>
   );
@@ -608,6 +693,8 @@ interface StageProps {
   isFrontView: boolean;
   isShowingHandles: boolean;
   touchTarget: TouchTarget | null;
+  isPicking: boolean;
+  onPick: (characterId: string, object: Object3D, point: ThreeVector3) => void;
   isPencilOnly: boolean;
   onTouchTarget: (target: TouchTarget | null) => void;
   onTouchDrop: (character: SceneCharacter, part: string, target: TouchTarget) => void;
@@ -784,6 +871,9 @@ function Stage(props: StageProps) {
               pin.startsWith('hand') ? [`wrist_${pin.slice(-1)}`, ...['thumb', 'index', 'middle', 'ring', 'pinky'].flatMap((finger) => [1, 2, 3].map((joint) => `${finger}_${joint}_${pin.slice(-1)}`))] : [`ankle_${pin.slice(-1)}`, `toes_${pin.slice(-1)}`],
             )}
             isPencilOnly={props.isPencilOnly}
+            isLocked={character.isLocked === true}
+            isPicking={props.isPicking}
+            onPick={(object, point) => props.onPick(character.id, object, point)}
             profile={character.profile}
             pose={character.pose}
             highlightedBones={character.id === selected?.id && !isExporting ? highlightedBones : []}
@@ -815,6 +905,12 @@ function Stage(props: StageProps) {
       ))}
     </>
   );
+}
+
+export function partForControl(controlName: string): string {
+  const side = controlName.match(/_(l|r)$/)?.[0] ?? '';
+  const part = PART_FOR_CONTROL[controlName.replace(/_(l|r)$/, '')] ?? 'hand';
+  return /^(head|chest|belly|hips)$/.test(part) ? part : `${part}${side}`;
 }
 
 // crypto.randomUUID only exists on https/localhost; a phone opening the dev server over Wi-Fi uses plain http.

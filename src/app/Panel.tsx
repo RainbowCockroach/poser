@@ -22,7 +22,7 @@ import { motionWords, partName } from './labels';
 import { THUMBNAIL_PIXELS, Tile, type ThumbnailRequest } from './Thumbnail';
 import { Guide } from './Guide';
 import { LENS_PRESETS, MAX_LENS_MM, MIN_LENS_MM, normalizeView, type CameraView } from '../core/camera';
-import { DEFAULT_BACKGROUND, newCharacterId, newLightId, newPropId, type ExportRequest, type LightEntry, type SceneCharacter, type SceneFile, type SceneState } from './App';
+import { partForControl, DEFAULT_BACKGROUND, newCharacterId, newLightId, newPropId, type ExportRequest, type LightEntry, type SceneCharacter, type SceneFile, type SceneState } from './App';
 // #endregion
 
 // #region Config
@@ -130,12 +130,17 @@ interface PanelProps {
   onReplaceScene: (scene: SceneState, camera?: CameraView) => void;
   onAddCharacter: (profile: CharacterProfile) => void;
   onRemoveCharacter: (id: string) => void;
+  onStartTouchPick: (part: string) => void;
+  onHoldHands: (otherId: string) => void;
+  onFixOverlaps: () => void;
+  onToggleLock: (id: string) => void;
 }
 
 export function Panel(props: PanelProps) {
   const { characters, selected, selectedControl, mode } = props;
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
+  const [lockedMenu, setLockedMenu] = useState<{ id: string; left: number; top: number } | null>(null);
   const [message, setMessage] = useState('');
   const [sharedLink, setSharedLink] = useState('');
   const [isShowingMore, setIsShowingMore] = useState(() => {
@@ -195,7 +200,7 @@ export function Panel(props: PanelProps) {
       const scene = data as SceneFile;
       const camera = typeof scene.camera === 'object' && scene.camera ? (normalizeView(scene.camera) ?? undefined) : undefined;
       props.onReplaceScene({
-        characters: scene.characters.map((entry) => ({ id: newCharacterId(), profile: normalizeProfile(entry.profile), pose: entry.pose ?? {} })),
+        characters: scene.characters.map((entry) => ({ id: newCharacterId(), profile: normalizeProfile(entry.profile), pose: entry.pose ?? {}, isLocked: entry.locked === true })),
         sceneProps: (Array.isArray(scene.props) ? scene.props.filter((prop) => typeof prop === 'object' && prop) : []).map((prop) => ({ ...normalizeProp(prop), id: newPropId() })),
         // Scenes saved before lights existed get the default lights.
         lights: (Array.isArray(scene.lights) ? scene.lights.filter((light) => typeof light === 'object' && light).map(normalizeLight) : DEFAULT_LIGHTS).map((light) => ({ ...light, id: newLightId() })),
@@ -293,7 +298,7 @@ export function Panel(props: PanelProps) {
     const camera = props.getCameraView();
     return {
       format: 'poser.scene/1',
-      characters: characters.map(({ profile, pose }) => ({ profile, pose })),
+      characters: characters.map(({ profile, pose, isLocked }) => ({ profile, pose, ...(isLocked && { locked: true }) })),
       ...(props.sceneProps.length > 0 && { props: props.sceneProps.map(({ id: _id, ...prop }) => prop) }),
       lights: props.lights.map(({ id: _id, ...light }) => light),
       background: props.background,
@@ -349,10 +354,16 @@ export function Panel(props: PanelProps) {
             {characters.map((character) => (
               <button
                 key={character.id}
-                className={character.id === selected?.id ? 'chip is-active' : 'chip'}
+                className={character.id === selected?.id ? 'chip is-active' : character.isLocked ? 'chip is-locked' : 'chip'}
                 style={{ borderColor: character.profile.color }}
-                onClick={() => props.onSelectCharacter(character.id)}
+                title={character.isLocked ? `${character.profile.name} is locked` : undefined}
+                onClick={(event) => {
+                  if (!character.isLocked) return props.onSelectCharacter(character.id);
+                  const bounds = event.currentTarget.getBoundingClientRect();
+                  setLockedMenu({ id: character.id, left: bounds.left, top: bounds.bottom + 6 });
+                }}
               >
+                {character.isLocked && <LockIcon />}
                 {character.profile.name}
               </button>
             ))}
@@ -378,6 +389,36 @@ export function Panel(props: PanelProps) {
           </button>
         </div>
       </header>
+
+      {lockedMenu && (() => {
+        const character = characters.find((entry) => entry.id === lockedMenu.id);
+        if (!character) return null;
+        return (
+          <>
+            <div className="menu-backdrop" onClick={() => setLockedMenu(null)} />
+            <div className="menu-list part-menu" style={{ left: Math.min(lockedMenu.left, window.innerWidth - 230), top: lockedMenu.top }} role="menu">
+              <strong>{character.profile.name} is locked</strong>
+              <button
+                onClick={() => {
+                  props.onToggleLock(character.id);
+                  setLockedMenu(null);
+                }}
+              >
+                Unlock {character.profile.name}
+              </button>
+              <button
+                className="danger"
+                onClick={() => {
+                  props.onRemoveCharacter(character.id);
+                  setLockedMenu(null);
+                }}
+              >
+                Remove {character.profile.name}
+              </button>
+            </div>
+          </>
+        );
+      })()}
 
       {(message || sharedLink) && (
         <div className="toast" role="status">
@@ -419,7 +460,7 @@ export function Panel(props: PanelProps) {
           <Guide />
           {isEmptyCharacterMode && (
             <>
-              <p className="hint">No character yet.</p>
+              {characters.length === 0 ? <p className="hint">No character yet.</p> : <p className="hint">Pick a character: tap its name at the top, or click it on the stage.</p>}
               <button onClick={() => props.onAddCharacter(DEFAULT_PROFILE)}>Add a mannequin</button>
             </>
           )}
@@ -538,6 +579,20 @@ function PoseCard(props: PoseCardProps) {
               Done
             </button>
           </div>
+          <h3>Touch</h3>
+          <div className="row">
+            <button onClick={() => props.onStartTouchPick(partForControl(selectedControl))} title="Then click the body part to touch, on any character">
+              Touch another part…
+            </button>
+            {isHandPart &&
+              props.characters
+                .filter((other) => other.id !== selected.id)
+                .map((other) => (
+                  <button key={other.id} onClick={() => props.onHoldHands(other.id)}>
+                    Hold hands with {other.profile.name}
+                  </button>
+                ))}
+          </div>
         </>
       ) : (
         <>
@@ -554,6 +609,17 @@ function PoseCard(props: PoseCardProps) {
             </button>
             <button className={props.isPinFeet ? 'is-active' : ''} aria-pressed={props.isPinFeet} onClick={props.onTogglePinFeet} title="When on, dragging the hips bends the legs and keeps the feet where they are (key P)">
               {props.isPinFeet ? 'Feet pinned' : 'Pin feet'}
+            </button>
+            <button onClick={props.onFixOverlaps} title="Bend arms and legs out of any body they sink into">
+              Pull sunk-in parts out
+            </button>
+          </div>
+          <div className="row">
+            <button onClick={() => props.onToggleLock(selected.id)} title="A locked character can't be clicked or moved until you unlock it from its name at the top (key L)">
+              Lock {profile.name}
+            </button>
+            <button className="danger" onClick={() => props.onRemoveCharacter(selected.id)} title="Key Delete; undo brings it back">
+              Remove {profile.name}
             </button>
           </div>
           <h3>Both hands</h3>
@@ -1167,6 +1233,15 @@ function ImageExport({ onExport }: { onExport: (request: ExportRequest) => void 
 // #endregion
 
 // #region Helpers
+function LockIcon() {
+  return (
+    <svg className="lock-icon" viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M4.5 7V5a3.5 3.5 0 0 1 7 0v2" fill="none" stroke="currentColor" strokeWidth="1.6" />
+      <rect x="3" y="7" width="10" height="7" rx="1.5" fill="currentColor" />
+    </svg>
+  );
+}
+
 function posePicture(profile: CharacterProfile, joints: Pose['joints']): ThumbnailRequest {
   return { profile, pose: { joints }, lights: DEFAULT_LIGHTS, background: THUMBNAIL_BACKGROUND, view: 'three-quarter', size: THUMBNAIL_PIXELS };
 }

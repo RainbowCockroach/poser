@@ -109,6 +109,14 @@ no wheel or middle button), so extra buttons and keys are only faster ways.
     front of the curled fingers it holds (peace: ring and little finger; fist and point: index and middle).
     Ranges: CMC flexion/extension ~53°, abduction ~42°, rotation ~17° (Cooney 1981); MCP flexion 55–60°, IP flexion
     80–90° with ~15° over-extension (https://pmc.ncbi.nlm.nih.gov/articles/PMC4372184, https://eatonhand.com/clf/clf218.htm).
+16. ✅ Touch and hold from a selection, lock, remove. A selected part's card and its right-click menu have "Touch
+    another part…" (the next click on any character picks the target; Esc or empty space cancels) and, for a hand,
+    "Hold hands with …" for every other character. Holding hands (`src/core/holding.ts`, CLI `hold`) moves both:
+    the meeting point splits the distance by arm length at the lowest height both reach, one palm turns back and the
+    other forward so they meet, and the fingers close. Overlaps are no longer checked while posing; "Pull sunk-in
+    parts out" does it on request. A locked character ignores clicks and drags (they reach the camera or whatever is
+    behind) until it is unlocked from its name chip; it can still be removed, and is saved as `locked` in scenes.
+    Grip was refitted around a 4.5 cm handle crossing the palm slightly diagonally.
 
 ## Sources
 

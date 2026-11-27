@@ -34,12 +34,15 @@ interface MannequinProps {
   targetBone: string | null;
   pinnedBones: string[];
   isPencilOnly: boolean;
+  isLocked: boolean;
+  isPicking: boolean;
+  onPick: (object: Object3D, point: Vector3) => void;
   onGrab: (grab: Grab) => void;
   onLookCloser: (bone: string) => void;
   onMenu: (bone: string, clientX: number, clientY: number) => void;
 }
 
-export function Mannequin({ characterId, profile, pose, highlightedBones, targetBone, pinnedBones, isPencilOnly, onGrab, onLookCloser, onMenu }: MannequinProps) {
+export function Mannequin({ characterId, profile, pose, highlightedBones, targetBone, pinnedBones, isPencilOnly, isLocked, isPicking, onPick, onGrab, onLookCloser, onMenu }: MannequinProps) {
   const rig = useMemo(() => buildRig(profile), [profile]);
   const camera = useThree((state) => state.camera);
   const viewportHeight = useThree((state) => state.size.height);
@@ -159,6 +162,15 @@ export function Mannequin({ characterId, profile, pose, highlightedBones, target
   };
 
   const handlePointerDown = (event: ThreeEvent<PointerEvent>) => {
+    // Picking what to touch takes any character, locked ones too.
+    if (isPicking) {
+      if (event.nativeEvent.button !== 0) return;
+      event.stopPropagation();
+      onPick(event.object, event.point);
+      return;
+    }
+    // A locked character lets the press through to whatever is behind it, or to the camera.
+    if (isLocked) return;
     event.stopPropagation();
     const boneGroup = grabbedBoneGroup(event.object, event.point);
     const { clientX, clientY } = event.nativeEvent;
@@ -198,7 +210,7 @@ export function Mannequin({ characterId, profile, pose, highlightedBones, target
 
   // Fingers have no hover: a tap would leave the highlight stuck on.
   const handlePointerMove = (event: ThreeEvent<PointerEvent>) => {
-    if (event.nativeEvent.pointerType === 'touch') return;
+    if (event.nativeEvent.pointerType === 'touch' || (isLocked && !isPicking)) return;
     event.stopPropagation();
     const control = CONTROL_FOR_BONE[grabbedBoneGroup(event.object, event.point).name] ?? null;
     if (control !== hoveredControl) setHoveredControl(control);

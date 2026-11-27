@@ -17,6 +17,7 @@ node src/cli/poser.ts camera scenes/sample.scene.json --position 1.5,0.5,2 --loo
 node src/cli/poser.ts render scenes/sample.scene.json --view low          # or --view three-quarter --lens 85
 node src/cli/poser.ts pose   scenes/sample.scene.json Bush "Sit on a chair"
 node src/cli/poser.ts touch  scenes/sample.scene.json Potat hand_r head --target Bush
+node src/cli/poser.ts hold   scenes/sample.scene.json Potat Bush        # both reach, palms meet, fingers close
 node src/cli/poser.ts check  scenes/sample.scene.json          # body parts sinking into each other
 node src/cli/poser.ts separate scenes/sample.scene.json Potat  # push them back out
 node src/cli/poser.ts link   scenes/sample.scene.json          # a link that opens the scene in the app
@@ -82,7 +83,8 @@ Multipliers are relative to a realistic adult (1 = average). `weight` is −1 (t
 }
 ```
 
-`position` moves the whole character (x/z on the floor, y up).
+`position` moves the whole character (x/z on the floor, y up). `"locked": true` on a character entry means the app
+won't let it be clicked or moved until it is unlocked; `hold` and `touch` targets still work on it, and `hold` leaves it still.
 
 Camera (optional): `"camera": { "position": [1.5, 0.5, 2], "target": [0, 0.9, 0], "lensMm": 24 }` is the view the app
 opens with; `"views"` is a list of the same with a `"name"`. `lensMm` is a full-frame lens (24 wide, 50 normal,

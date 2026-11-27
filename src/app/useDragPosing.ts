@@ -201,7 +201,7 @@ function characterIdOf(object: Object3D): string | null {
 
 // The ball of a shoulder, elbow or knee, or the last bit of the limb next to it, is that joint; the rest of a bone is
 // the segment people name. So a hand let go on the lower thigh lands on the knee.
-function partOfBone(mesh: Object3D, point: Vector3): string {
+export function partOfBone(mesh: Object3D, point: Vector3): string {
   const bone: string = mesh.userData.bone;
   const side = bone.slice(-1);
   const boneGroup = mesh.parent!;
