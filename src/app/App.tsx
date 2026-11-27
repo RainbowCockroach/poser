@@ -525,8 +525,8 @@ export function App() {
             lights={lights}
             background={background}
             selected={selected}
-            selectedLightId={selectedLightId}
-            selectedPropId={selectedPropId}
+            selectedLightId={mode === 'light' ? selectedLightId : null}
+            selectedPropId={mode === 'prop' ? selectedPropId : null}
             onSelectProp={(id) => selectObject({ kind: 'prop', id })}
             onSelectLight={(id) => selectObject({ kind: 'light', id })}
             onMoveLight={(id, position, gestureKey) => changeScene((state) => ({ ...state, lights: state.lights.map((light) => (light.id === id ? { ...light, position } : light)) }), gestureKey)}
