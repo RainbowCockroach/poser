@@ -28,8 +28,8 @@ const KEY_ROWS: { keys: string[]; action: string }[] = [
   { keys: ['G'], action: 'Drop to the floor' },
   { keys: ['P'], action: 'Pin the selected hand or foot (or both feet); pinned ones stay put while the rest moves' },
   { keys: ['N'], action: 'Next character' },
-  { keys: ['L'], action: 'Lock the selected character (unlock it from its name at the top)' },
-  { keys: ['Delete'], action: 'Remove the selected character (undo brings it back)' },
+  { keys: ['L'], action: 'Lock the selected character, prop or light (unlock it in the objects list)' },
+  { keys: ['Delete'], action: 'Remove the selected character, prop or light (undo brings it back)' },
   { keys: ['H'], action: 'Hide the controls for a clean view to draw from' },
   { keys: ['Esc'], action: 'Deselect' },
 ];

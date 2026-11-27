@@ -14,6 +14,7 @@ import { Grid, Html, OrbitControls, OrthographicCamera, PerspectiveCamera } from
 import { Box3, MOUSE, PerspectiveCamera as ThreePerspectiveCamera, SRGBColorSpace, TextureLoader, Vector2, Vector3, type Texture } from 'three';
 import { Mannequin } from './Mannequin';
 import { Panel, type Mode, type ViewName } from './Panel';
+import type { ObjectRef } from './Outliner';
 import { partName } from './labels';
 import { Help } from './Help';
 import { TouchForm, type TouchPick } from './TouchForm';
@@ -45,6 +46,7 @@ export interface SceneCharacter {
 
 export interface LightEntry extends SceneLight {
   id: string;
+  isLocked?: boolean;
 }
 
 export interface SceneState {
@@ -58,8 +60,8 @@ export interface SceneState {
 export interface SceneFile {
   format: 'poser.scene/1';
   characters: { profile: CharacterProfile; pose: Pose; locked?: boolean }[];
-  props?: SceneProp[];
-  lights?: SceneLight[];
+  props?: (SceneProp & { locked?: boolean })[];
+  lights?: (SceneLight & { locked?: boolean })[];
   background?: string;
   camera?: CameraView;
   views?: CameraView[];
@@ -100,9 +102,9 @@ const PART_FOR_CONTROL: Record<string, string> = {
   hip: 'thigh', knee: 'knee', ankle: 'foot', toes: 'foot',
   neck: 'head', thoracic: 'chest', lumbar: 'belly', pelvis: 'hips',
 };
-// On screens wider than phones the mode rail and the card float over the stage; these match styles.css (rail and card plus gaps).
+// On screens wider than phones the objects list and the card float over the stage; these match styles.css (list and card plus gaps).
 const WIDE_STAGE_PIXELS = 760;
-const RAIL_SPACE_PIXELS = 94;
+const RAIL_SPACE_PIXELS = 210;
 const CARD_SPACE_PIXELS = 340;
 // Safari and every iPhone/iPad browser (WebKit) put the whole scene in shadow with PCF shadow maps; variance shadow maps work there.
 // three.js can't do variance shadows for lamps (point lights), so lamps cast no shadow on those browsers.
@@ -344,13 +346,52 @@ export function App() {
     setTouchPick(null);
   };
 
-  const toggleLock = (id: string) => {
-    const character = characters.find((entry) => entry.id === id);
-    if (!character) return;
-    updateCharacter(id, { isLocked: !character.isLocked }, 'lock');
-    if (character.isLocked) return;
-    if (selectedId === id) setSelectedId(characters.find((entry) => entry.id !== id && !entry.isLocked)?.id ?? null);
-    setSelectedControl(null);
+  const isCharacterMode = mode === 'pose' || mode === 'library' || mode === 'body';
+
+  const selectObject = (object: ObjectRef) => {
+    setTouchPick(null);
+    if (object.kind === 'character') {
+      setSelectedId(object.id);
+      setSelectedControl(null);
+      if (!isCharacterMode) setMode('pose');
+      return;
+    }
+    if (object.kind === 'prop') setSelectedPropId(object.id);
+    if (object.kind === 'light') setSelectedLightId(object.id);
+    setMode(object.kind);
+  };
+
+  // A locked object stays listed and can be removed, but the stage lets clicks and drags pass it by.
+  const toggleLock = (object: ObjectRef) => {
+    if (object.kind === 'character') {
+      const character = characters.find((entry) => entry.id === object.id);
+      if (!character) return;
+      updateCharacter(object.id, { isLocked: !character.isLocked }, 'lock');
+      if (!character.isLocked) setSelectedControl(null);
+      return;
+    }
+    if (object.kind === 'prop') changeScene((state) => ({ ...state, sceneProps: state.sceneProps.map((prop) => (prop.id === object.id ? { ...prop, isLocked: !prop.isLocked } : prop)) }), 'lock');
+    if (object.kind === 'light') changeScene((state) => ({ ...state, lights: state.lights.map((light) => (light.id === object.id ? { ...light, isLocked: !light.isLocked } : light)) }), 'lock');
+  };
+
+  const removeObject = (object: ObjectRef) => {
+    if (object.kind === 'character') return removeCharacter(object.id);
+    if (object.kind === 'prop') {
+      changeScene((state) => ({ ...state, sceneProps: state.sceneProps.filter((prop) => prop.id !== object.id) }), 'props:remove');
+      setSelectedPropId(null);
+    }
+    if (object.kind === 'light') {
+      changeScene((state) => ({ ...state, lights: state.lights.filter((light) => light.id !== object.id) }), 'lights:remove');
+      setSelectedLightId(null);
+    }
+  };
+
+  // The object the card is about: Delete removes it and L locks it.
+  const focusedObject = (): ObjectRef | null => {
+    if (isCharacterMode) return selected ? { kind: 'character', id: selected.id } : null;
+    if (mode === 'prop' && selectedPropId) return { kind: 'prop', id: selectedPropId };
+    if (mode === 'light' && selectedLightId) return { kind: 'light', id: selectedLightId };
+    return null;
   };
 
   const isPinFeet = selectedPins.includes('foot_l') && selectedPins.includes('foot_r');
@@ -425,16 +466,13 @@ export function App() {
       if (!selected || event.shiftKey) return frameAll();
       return frame(bonePoints(selected));
     }
-    if (key === 'delete' || key === 'backspace') {
-      if (mode === 'scene' && selectedPropId) {
-        changeScene((state) => ({ ...state, sceneProps: state.sceneProps.filter((prop) => prop.id !== selectedPropId) }), 'props:remove');
-        return setSelectedPropId(null);
-      }
-      if (selected) removeCharacter(selected.id);
-      return;
+    if (key === 'delete' || key === 'backspace' || key === 'l') {
+      const object = focusedObject();
+      if (!object) return;
+      if (key === 'l') return toggleLock(object);
+      return removeObject(object);
     }
-    if (!selected) return;
-    if (key === 'l') return toggleLock(selected.id);
+    if (!selected || selected.isLocked) return;
 
     const joints = selected.pose.joints ?? {};
     const view = ({ '1': 'front', '2': 'side', '3': 'back', '4': 'three-quarter' } as Record<string, ViewName>)[key];
@@ -489,10 +527,9 @@ export function App() {
             selected={selected}
             selectedLightId={selectedLightId}
             selectedPropId={selectedPropId}
-            onSelectProp={(id) => {
-              setSelectedPropId(id);
-              setMode('scene');
-            }}
+            onSelectProp={(id) => selectObject({ kind: 'prop', id })}
+            onSelectLight={(id) => selectObject({ kind: 'light', id })}
+            onMoveLight={(id, position, gestureKey) => changeScene((state) => ({ ...state, lights: state.lights.map((light) => (light.id === id ? { ...light, position } : light)) }), gestureKey)}
             onMoveProp={(id, position, gestureKey) => changeScene((state) => ({ ...state, sceneProps: state.sceneProps.map((prop) => (prop.id === id ? { ...prop, position } : prop)) }), gestureKey)}
             highlightedBones={isCleanView ? [] : highlightedBones}
             isCleanView={isCleanView}
@@ -502,7 +539,7 @@ export function App() {
               if (controlName) lookCloser(character, controlName);
             }}
             isFrontView={isFrontView}
-            isShowingHandles={mode === 'pose' && !isCleanView}
+            isShowingHandles={mode === 'pose' && !isCleanView && !selected?.isLocked}
             touchTarget={touchTarget}
             isPicking={touchPick !== null}
             onPick={finishTouchPick}
@@ -533,7 +570,7 @@ export function App() {
             onSelect={(id, control) => {
               setSelectedId(id);
               setSelectedControl(control);
-              if (mode === 'scene') setMode('pose');
+              if (!isCharacterMode) setMode('pose');
             }}
             onPose={(id, pose, gestureKey) => updateCharacter(id, { pose }, gestureKey)}
           />
@@ -588,7 +625,7 @@ export function App() {
               <button onClick={act(() => startTouch(character.id, partForControl(controlName)))}>Touch…</button>
               <button onClick={act(() => fixOverlaps(character))}>Pull sunk-in parts out</button>
               <hr />
-              <button onClick={act(() => toggleLock(character.id))}>Lock {character.profile.name}</button>
+              <button onClick={act(() => toggleLock({ kind: 'character', id: character.id }))}>Lock {character.profile.name}</button>
               <button className="danger" onClick={act(() => removeCharacter(character.id))}>
                 Remove {character.profile.name}
               </button>
@@ -625,6 +662,12 @@ export function App() {
         selectedPropId={selectedPropId}
         onSelectLight={setSelectedLightId}
         onSelectProp={setSelectedPropId}
+        onSelectObject={selectObject}
+        onRemoveObject={removeObject}
+        onShowLight={(id) => {
+          const light = lights.find((entry) => entry.id === id);
+          if (light) frame([...characters.flatMap((character) => bonePoints(character)), new Vector3(...light.position)]);
+        }}
         onChangeProps={(update, key) => changeScene((state) => ({ ...state, sceneProps: update(state.sceneProps) }), key)}
         mode={mode}
         onChangeMode={setMode}
@@ -695,6 +738,8 @@ interface StageProps {
   selectedLightId: string | null;
   selectedPropId: string | null;
   onSelectProp: (id: string) => void;
+  onSelectLight: (id: string) => void;
+  onMoveLight: (id: string, position: Vec3, gestureKey: string) => void;
   onMoveProp: (id: string, position: Vec3, gestureKey: string) => void;
   highlightedBones: string[];
   isCleanView: boolean;
@@ -845,7 +890,7 @@ function Stage(props: StageProps) {
       )}
       <OrbitControls key={isFrontView ? `front-${focusX}` : `free-${props.sceneVersion}`} target={[isFrontView ? focusX : 0, isFrontView ? focusHeight / 2 : 1, 0]} enableRotate={!isFrontView} mouseButtons={{ LEFT: MOUSE.ROTATE, MIDDLE: MOUSE.ROTATE, RIGHT: MOUSE.PAN }} zoomToCursor makeDefault onChange={reportCamera} />
 
-      <SceneLights lights={lights} selectedLightId={props.selectedLightId} isShowingMarkers={!isExporting} />
+      <SceneLights lights={lights} selectedLightId={props.selectedLightId} isShowingMarkers={!isExporting} onSelect={props.onSelectLight} onMove={props.onMoveLight} />
 
       <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[40, 40]} />

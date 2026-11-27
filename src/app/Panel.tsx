@@ -18,6 +18,7 @@ import { DEFAULT_LIGHTS, LIGHT_PRESETS, MAX_INTENSITY, newLight, normalizeLight,
 import { newProp, normalizeProp, PROP_KINDS, propBoxes, MAX_PROP_SIZE, MIN_PROP_SIZE, type PropKind } from '../core/props';
 import type { PropEntry } from './Props';
 import { motionWords, partName } from './labels';
+import { LockIcon, Outliner, type ObjectRef } from './Outliner';
 import { THUMBNAIL_PIXELS, Tile, type ThumbnailRequest } from './Thumbnail';
 import { Guide } from './Guide';
 import { LENS_PRESETS, MAX_LENS_MM, MIN_LENS_MM, normalizeView, type CameraView } from '../core/camera';
@@ -25,15 +26,14 @@ import { partForControl, DEFAULT_BACKGROUND, newCharacterId, newLightId, newProp
 // #endregion
 
 // #region Config
-export type Mode = 'pose' | 'library' | 'body' | 'scene' | 'camera';
+// What the card shows: one of a character's three tabs, or the card of another kind of object.
+export type Mode = 'pose' | 'library' | 'body' | 'scene' | 'camera' | 'prop' | 'light';
 export type ViewName = 'front' | 'side' | 'back' | 'three-quarter';
 
-const MODES: { mode: Mode; label: string }[] = [
+const CHARACTER_TABS: { mode: Mode; label: string }[] = [
   { mode: 'pose', label: 'Pose' },
   { mode: 'library', label: 'Library' },
   { mode: 'body', label: 'Body' },
-  { mode: 'scene', label: 'Scene' },
-  { mode: 'camera', label: 'Camera' },
 ];
 
 const VIEW_BUTTONS: { view: ViewName; label: string; key: string }[] = [
@@ -130,14 +130,16 @@ interface PanelProps {
   onRemoveCharacter: (id: string) => void;
   onStartTouch: (part: string) => void;
   onFixOverlaps: () => void;
-  onToggleLock: (id: string) => void;
+  onSelectObject: (object: ObjectRef) => void;
+  onToggleLock: (object: ObjectRef) => void;
+  onRemoveObject: (object: ObjectRef) => void;
+  onShowLight: (id: string) => void;
 }
 
 export function Panel(props: PanelProps) {
   const { characters, selected, selectedControl, mode } = props;
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
-  const [lockedMenu, setLockedMenu] = useState<{ id: string; left: number; top: number } | null>(null);
   const [message, setMessage] = useState('');
   const [sharedLink, setSharedLink] = useState('');
   const [isShowingMore, setIsShowingMore] = useState(() => {
@@ -198,9 +200,9 @@ export function Panel(props: PanelProps) {
       const camera = typeof scene.camera === 'object' && scene.camera ? (normalizeView(scene.camera) ?? undefined) : undefined;
       props.onReplaceScene({
         characters: scene.characters.map((entry) => ({ id: newCharacterId(), profile: normalizeProfile(entry.profile), pose: entry.pose ?? {}, isLocked: entry.locked === true })),
-        sceneProps: (Array.isArray(scene.props) ? scene.props.filter((prop) => typeof prop === 'object' && prop) : []).map((prop) => ({ ...normalizeProp(prop), id: newPropId() })),
+        sceneProps: (Array.isArray(scene.props) ? scene.props.filter((prop) => typeof prop === 'object' && prop) : []).map((prop) => ({ ...normalizeProp(prop), id: newPropId(), isLocked: prop.locked === true })),
         // Scenes saved before lights existed get the default lights.
-        lights: (Array.isArray(scene.lights) ? scene.lights.filter((light) => typeof light === 'object' && light).map(normalizeLight) : DEFAULT_LIGHTS).map((light) => ({ ...light, id: newLightId() })),
+        lights: (Array.isArray(scene.lights) ? scene.lights.filter((light) => typeof light === 'object' && light) : DEFAULT_LIGHTS).map((light) => ({ ...normalizeLight(light), id: newLightId(), isLocked: 'locked' in light && light.locked === true })),
         background: /^#[0-9a-f]{6}$/i.test(scene.background ?? '') ? scene.background! : DEFAULT_BACKGROUND,
         views: (Array.isArray(scene.views) ? scene.views : []).flatMap((view) => (typeof view === 'object' && view ? (normalizeView(view) ?? []) : [])),
       }, camera);
@@ -296,8 +298,8 @@ export function Panel(props: PanelProps) {
     return {
       format: 'poser.scene/1',
       characters: characters.map(({ profile, pose, isLocked }) => ({ profile, pose, ...(isLocked && { locked: true }) })),
-      ...(props.sceneProps.length > 0 && { props: props.sceneProps.map(({ id: _id, ...prop }) => prop) }),
-      lights: props.lights.map(({ id: _id, ...light }) => light),
+      ...(props.sceneProps.length > 0 && { props: props.sceneProps.map(({ id: _id, isLocked, ...prop }) => ({ ...prop, ...(isLocked && { locked: true }) })) }),
+      lights: props.lights.map(({ id: _id, isLocked, ...light }) => ({ ...light, ...(isLocked && { locked: true }) })),
       background: props.background,
       ...(camera && { camera }),
       ...(props.views.length > 0 && { views: props.views }),
@@ -313,14 +315,47 @@ export function Panel(props: PanelProps) {
     URL.revokeObjectURL(link.href);
   };
 
-  const cardTitle = {
-    pose: selected ? (selectedControl ? partName(selectedControl) : selected.profile.name) : 'Pose',
-    library: 'Library',
-    body: selected ? `${selected.profile.name}'s body` : 'Body',
-    scene: 'Scene',
-    camera: 'Camera',
-  }[mode];
-  const isEmptyCharacterMode = !selected && (mode === 'pose' || mode === 'library' || mode === 'body');
+  const isCharacterMode = mode === 'pose' || mode === 'library' || mode === 'body';
+  const selectedProp = props.sceneProps.find((prop) => prop.id === props.selectedPropId) ?? null;
+  const selectedLight = props.lights.find((light) => light.id === props.selectedLightId) ?? null;
+  const selectedObject: ObjectRef = isCharacterMode
+    ? { kind: 'character', id: selected?.id ?? '' }
+    : mode === 'prop'
+      ? { kind: 'prop', id: selectedProp?.id ?? '' }
+      : mode === 'light'
+        ? { kind: 'light', id: selectedLight?.id ?? '' }
+        : { kind: mode, id: '' };
+  const cardTitle = isCharacterMode
+    ? selected
+      ? selectedControl && mode === 'pose'
+        ? `${selected.profile.name}: ${partName(selectedControl).toLowerCase()}`
+        : selected.profile.name
+      : 'Characters'
+    : mode === 'prop'
+      ? selectedProp ? PROP_KINDS[selectedProp.kind].label : 'Prop'
+      : mode === 'light'
+        ? selectedLight ? `${LIGHT_KINDS.find((entry) => entry.kind === selectedLight.kind)!.label} light` : 'Light'
+        : mode === 'camera' ? 'Camera' : 'Scene';
+
+  // Seats and steps go right under the selected character (a sitting pose then lands on them), a wall behind it, a table in front.
+  const addProp = (kind: PropKind) => {
+    const [x, , z] = selected?.pose.position ?? [0, 0, 0];
+    const offset = kind === 'wall' ? -0.5 : kind === 'table' ? 0.6 : 0;
+    const added = { ...newProp(kind, [x, 0, z + offset]), id: newPropId() };
+    props.onChangeProps((list) => [...list, added], 'props:add');
+    props.onSelectObject({ kind: 'prop', id: added.id });
+  };
+  // A new lamp or spot hangs in view, up and to the front-left of the selected character, aimed at its chest.
+  const addLight = (kind: LightKind) => {
+    const [x, , z] = selected?.pose.position ?? [0, 0, 0];
+    const height = selected ? selected.profile.heightCm / 100 : 1.7;
+    const base = newLight(kind);
+    const target: LightEntry['target'] = [x, height * 0.6, z];
+    const isNearby = kind === 'point' || kind === 'spot';
+    const added = { ...base, ...(isNearby && { position: [x + 0.9, height + 0.3, z + 0.9] as LightEntry['position'], target }), id: newLightId() };
+    props.onChangeLights((list) => [...list, added], 'lights:add');
+    props.onSelectObject({ kind: 'light', id: added.id });
+  };
 
   return (
     <>
@@ -347,27 +382,6 @@ export function Panel(props: PanelProps) {
               </>
             )}
           </div>
-          <div className="character-chips">
-            {characters.map((character) => (
-              <button
-                key={character.id}
-                className={character.id === selected?.id ? 'chip is-active' : character.isLocked ? 'chip is-locked' : 'chip'}
-                style={{ borderColor: character.profile.color }}
-                title={character.isLocked ? `${character.profile.name} is locked` : undefined}
-                onClick={(event) => {
-                  if (!character.isLocked) return props.onSelectCharacter(character.id);
-                  const bounds = event.currentTarget.getBoundingClientRect();
-                  setLockedMenu({ id: character.id, left: bounds.left, top: bounds.bottom + 6 });
-                }}
-              >
-                {character.isLocked && <LockIcon />}
-                {character.profile.name}
-              </button>
-            ))}
-            <button className="chip" onClick={() => props.onAddCharacter(DEFAULT_PROFILE)} title="Add a mannequin" aria-label="Add a mannequin">
-              +
-            </button>
-          </div>
         </div>
         <div className="topbar-group">
           {props.isFrontView && (
@@ -387,36 +401,6 @@ export function Panel(props: PanelProps) {
         </div>
       </header>
 
-      {lockedMenu && (() => {
-        const character = characters.find((entry) => entry.id === lockedMenu.id);
-        if (!character) return null;
-        return (
-          <>
-            <div className="menu-backdrop" onClick={() => setLockedMenu(null)} />
-            <div className="menu-list part-menu" style={{ left: Math.min(lockedMenu.left, window.innerWidth - 230), top: lockedMenu.top }} role="menu">
-              <strong>{character.profile.name} is locked</strong>
-              <button
-                onClick={() => {
-                  props.onToggleLock(character.id);
-                  setLockedMenu(null);
-                }}
-              >
-                Unlock {character.profile.name}
-              </button>
-              <button
-                className="danger"
-                onClick={() => {
-                  props.onRemoveCharacter(character.id);
-                  setLockedMenu(null);
-                }}
-              >
-                Remove {character.profile.name}
-              </button>
-            </div>
-          </>
-        );
-      })()}
-
       {(message || sharedLink) && (
         <div className="toast" role="status">
           {message && <span>{message}</span>}
@@ -430,21 +414,20 @@ export function Panel(props: PanelProps) {
         </div>
       )}
 
-      <nav className="modes" aria-label="Modes">
-        {MODES.map((entry) => (
-          <button
-            key={entry.mode}
-            className={entry.mode === mode ? 'is-active' : ''}
-            aria-pressed={entry.mode === mode}
-            onClick={() => {
-              props.onChangeMode(entry.mode);
-              props.onFoldCard(false);
-            }}
-          >
-            {entry.label}
-          </button>
-        ))}
-      </nav>
+      <Outliner
+        characters={characters}
+        sceneProps={props.sceneProps}
+        lights={props.lights}
+        selected={selectedObject}
+        onSelect={(object) => {
+          props.onSelectObject(object);
+          props.onFoldCard(false);
+        }}
+        onToggleLock={props.onToggleLock}
+        onAddCharacter={() => props.onAddCharacter(DEFAULT_PROFILE)}
+        onAddProp={addProp}
+        onAddLight={addLight}
+      />
 
       <aside className={props.isCardFolded ? 'card is-collapsed' : 'card'} aria-label={cardTitle}>
         <header className="card-header">
@@ -455,21 +438,29 @@ export function Panel(props: PanelProps) {
         </header>
         <div className="card-body">
           <Guide />
-          {isEmptyCharacterMode && (
+          {isCharacterMode && selected && !selected.isLocked && (
+            <div className="card-tabs" role="tablist">
+              {CHARACTER_TABS.map((tab) => (
+                <button key={tab.mode} role="tab" aria-selected={tab.mode === mode} className={tab.mode === mode ? 'is-active' : ''} onClick={() => props.onChangeMode(tab.mode)}>
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {isCharacterMode && !selected && (
             <>
-              {characters.length === 0 ? <p className="hint">No character yet.</p> : <p className="hint">Pick a character: tap its name at the top, or click it on the stage.</p>}
+              {characters.length === 0 ? <p className="hint">No character yet.</p> : <p className="hint">Pick a character in the list, or click it on the stage.</p>}
               <button onClick={() => props.onAddCharacter(DEFAULT_PROFILE)}>Add a mannequin</button>
             </>
           )}
-          {selected && mode === 'pose' && <PoseCard {...props} selected={selected} isShowingMore={isShowingMore} onToggleMore={toggleMore} />}
-          {selected && mode === 'library' && <LibraryCard {...props} selected={selected} myPoses={myPoses} onApplyPose={applyPose} onSaveMyPoses={saveMyPoses} />}
-          {selected && mode === 'body' && <BodyCard {...props} selected={selected} onShareCharacter={() => share('character', selected.profile, selected.profile.name)} />}
-          {mode === 'scene' && (
-            <>
-              <PropsEditor {...props} />
-              <LightsEditor {...props} />
-            </>
-          )}
+          {isCharacterMode && selected?.isLocked && <LockedCard name={selected.profile.name} onUnlock={() => props.onToggleLock({ kind: 'character', id: selected.id })} onRemove={() => props.onRemoveObject({ kind: 'character', id: selected.id })} />}
+          {selected && !selected.isLocked && mode === 'pose' && <PoseCard {...props} selected={selected} isShowingMore={isShowingMore} onToggleMore={toggleMore} />}
+          {selected && !selected.isLocked && mode === 'library' && <LibraryCard {...props} selected={selected} myPoses={myPoses} onApplyPose={applyPose} onSaveMyPoses={saveMyPoses} />}
+          {selected && !selected.isLocked && mode === 'body' && <BodyCard {...props} selected={selected} onShareCharacter={() => share('character', selected.profile, selected.profile.name)} />}
+          {mode === 'prop' && selectedProp && (selectedProp.isLocked ? <LockedCard name={PROP_KINDS[selectedProp.kind].label} onUnlock={() => props.onToggleLock({ kind: 'prop', id: selectedProp.id })} onRemove={() => props.onRemoveObject({ kind: 'prop', id: selectedProp.id })} /> : <PropCard {...props} prop={selectedProp} />)}
+          {mode === 'light' && selectedLight && (selectedLight.isLocked ? <LockedCard name="This light" onUnlock={() => props.onToggleLock({ kind: 'light', id: selectedLight.id })} onRemove={() => props.onRemoveObject({ kind: 'light', id: selectedLight.id })} /> : <LightCard {...props} light={selectedLight} />)}
+          {(mode === 'prop' && !selectedProp) || (mode === 'light' && !selectedLight) ? <p className="hint">Pick one in the list, or add one with "+ Add".</p> : null}
+          {mode === 'scene' && <SceneCard {...props} />}
           {mode === 'camera' && <CameraEditor {...props} />}
         </div>
       </aside>
@@ -603,7 +594,7 @@ function PoseCard(props: PoseCardProps) {
             </button>
           </div>
           <div className="row">
-            <button onClick={() => props.onToggleLock(selected.id)} title="A locked character can't be clicked or moved until you unlock it from its name at the top (key L)">
+            <button onClick={() => props.onToggleLock({ kind: 'character', id: selected.id })} title="A locked character can't be clicked or moved until you unlock it in the list (key L)">
               Lock {profile.name}
             </button>
             <button className="danger" onClick={() => props.onRemoveCharacter(selected.id)} title="Key Delete; undo brings it back">
@@ -830,79 +821,42 @@ function BodyCard({ selected, onUpdateCharacter, onRemoveCharacter, onShareChara
   );
 }
 
-function PropsEditor({ sceneProps, selected, selectedPropId, onSelectProp, onChangeProps }: PanelProps) {
-  const selectedProp = sceneProps.find((prop) => prop.id === selectedPropId) ?? null;
-  const updateProp = (change: Partial<PropEntry>) => {
-    if (!selectedProp) return;
-    onChangeProps((list) => list.map((prop) => (prop.id === selectedProp.id ? { ...prop, ...change } : prop)), `prop:${selectedProp.id}:${Object.keys(change).join()}`);
-  };
-  const sizeLabels = selectedProp?.kind === 'chair' || selectedProp?.kind === 'stool' ? ['Width', 'Seat height', 'Depth'] : ['Width', 'Height', 'Depth'];
+function PropCard({ prop, onChangeProps, onToggleLock, onRemoveObject }: PanelProps & { prop: PropEntry }) {
+  const updateProp = (change: Partial<PropEntry>) =>
+    onChangeProps((list) => list.map((entry) => (entry.id === prop.id ? { ...entry, ...change } : entry)), `prop:${prop.id}:${Object.keys(change).join()}`);
+  const sizeLabels = prop.kind === 'chair' || prop.kind === 'stool' ? ['Width', 'Seat height', 'Depth'] : ['Width', 'Height', 'Depth'];
 
   return (
-    <section className="card-section">
-      <h3>Props</h3>
-      <p className="hint">Furniture to sit on, lean on or stand on. A seat or step appears under the selected character: pick a sitting pose and it lands on the seat. Drag a prop on the stage to move it.</p>
+    <>
+      <p className="hint">Drag it on the stage to move it. Pick a sitting pose for a character on a seat and it lands on it.</p>
+      <Slider label="left / right" unit=" m" min={-5} max={5} step={0.01} value={prop.position[0]} onChange={(x) => updateProp({ position: [x, prop.position[1], prop.position[2]] })} />
+      <Slider label="back / front" unit=" m" min={-5} max={5} step={0.01} value={prop.position[2]} onChange={(z) => updateProp({ position: [prop.position[0], prop.position[1], z] })} />
+      <Slider label="turn" unit="°" min={-180} max={180} step={1} value={prop.turn} onChange={(turn) => updateProp({ turn })} />
+      {sizeLabels.map((label, axis) => (
+        <Slider
+          key={label}
+          label={label}
+          unit=" m"
+          min={MIN_PROP_SIZE}
+          max={Math.min(MAX_PROP_SIZE, axis === 1 ? 3 : 4)}
+          step={0.01}
+          value={prop.size[axis]}
+          onChange={(value) => updateProp({ size: prop.size.map((current, index) => (index === axis ? value : current)) as PropEntry['size'] })}
+        />
+      ))}
+      <label className="field">
+        Color
+        <input type="color" value={prop.color} onChange={(event) => updateProp({ color: event.target.value })} />
+      </label>
       <div className="row">
-        {(Object.keys(PROP_KINDS) as PropKind[]).map((kind) => (
-          <button
-            key={kind}
-            onClick={() => {
-              // Seats and steps go right under the selected character (a sitting pose then lands on them), a wall behind it, a table in front.
-              const [x, , z] = selected?.pose.position ?? [0, 0, 0];
-              const offset = kind === 'wall' ? -0.5 : kind === 'table' ? 0.6 : 0;
-              const added = { ...newProp(kind, [x, 0, z + offset]), id: newPropId() };
-              onChangeProps((list) => [...list, added], 'props:add');
-              onSelectProp(added.id);
-            }}
-          >
-            + {PROP_KINDS[kind].label}
-          </button>
-        ))}
+        <button onClick={() => onToggleLock({ kind: 'prop', id: prop.id })} title="A locked prop can't be clicked or moved (key L)">
+          Lock
+        </button>
+        <button className="danger" onClick={() => onRemoveObject({ kind: 'prop', id: prop.id })} title="Key Delete">
+          Remove
+        </button>
       </div>
-      {sceneProps.length > 0 && (
-        <div className="chips">
-          {sceneProps.map((prop) => (
-            <button key={prop.id} className={prop.id === selectedPropId ? 'chip is-active' : 'chip'} style={{ borderColor: prop.color }} onClick={() => onSelectProp(prop.id === selectedPropId ? null : prop.id)}>
-              {PROP_KINDS[prop.kind].label}
-            </button>
-          ))}
-        </div>
-      )}
-      {selectedProp && (
-        <>
-          <Slider label="left / right" unit=" m" min={-5} max={5} step={0.01} value={selectedProp.position[0]} onChange={(x) => updateProp({ position: [x, selectedProp.position[1], selectedProp.position[2]] })} />
-          <Slider label="back / front" unit=" m" min={-5} max={5} step={0.01} value={selectedProp.position[2]} onChange={(z) => updateProp({ position: [selectedProp.position[0], selectedProp.position[1], z] })} />
-          <Slider label="turn" unit="°" min={-180} max={180} step={1} value={selectedProp.turn} onChange={(turn) => updateProp({ turn })} />
-          {sizeLabels.map((label, axis) => (
-            <Slider
-              key={label}
-              label={label}
-              unit=" m"
-              min={MIN_PROP_SIZE}
-              max={Math.min(MAX_PROP_SIZE, axis === 1 ? 3 : 4)}
-              step={0.01}
-              value={selectedProp.size[axis]}
-              onChange={(value) => updateProp({ size: selectedProp.size.map((current, index) => (index === axis ? value : current)) as PropEntry['size'] })}
-            />
-          ))}
-          <label className="field">
-            Color
-            <input type="color" value={selectedProp.color} onChange={(event) => updateProp({ color: event.target.value })} />
-          </label>
-          <div className="row">
-            <button
-              className="danger"
-              onClick={() => {
-                onChangeProps((list) => list.filter((prop) => prop.id !== selectedProp.id), 'props:remove');
-                onSelectProp(null);
-              }}
-            >
-              Remove prop
-            </button>
-          </div>
-        </>
-      )}
-    </section>
+    </>
   );
 }
 
@@ -971,20 +925,79 @@ function CameraEditor({ views, lensMm, onChangeLens, getCameraView, onGoToView, 
   );
 }
 
-function LightsEditor({ lights, background, selected, selectedLightId, onSelectLight, onChangeLights, onChangeBackground }: PanelProps) {
-  const selectedLight = lights.find((light) => light.id === selectedLightId) ?? null;
-  const updateLight = (change: Partial<LightEntry>) => {
-    if (!selectedLight) return;
-    onChangeLights((list) => list.map((light) => (light.id === selectedLight.id ? { ...light, ...change } : light)), `light:${selectedLight.id}:${Object.keys(change).join()}`);
-  };
-  const placement = selectedLight ? placementOf(selectedLight) : null;
-  const place = (change: Partial<LightPlacement>) => updateLight({ position: positionFromPlacement(selectedLight!.target, { ...placement!, ...change }) });
-  const labelOf = (light: LightEntry) => LIGHT_KINDS.find((entry) => entry.kind === light.kind)!.label;
+function LightCard({ light, onChangeLights, onToggleLock, onRemoveObject, onShowLight }: PanelProps & { light: LightEntry }) {
+  const updateLight = (change: Partial<LightEntry>) =>
+    onChangeLights((list) => list.map((entry) => (entry.id === light.id ? { ...entry, ...change } : entry)), `light:${light.id}:${Object.keys(change).join()}`);
+  const placement = placementOf(light);
+  const place = (change: Partial<LightPlacement>) => updateLight({ position: positionFromPlacement(light.target, { ...placement, ...change }) });
 
   return (
-    <section className="card-section">
-      <h3>Lights</h3>
-      <p className="hint">A preset replaces all lights:</p>
+    <>
+      {light.kind !== 'ambient' && (
+        <>
+          <p className="hint">Drag its ball on the stage to move it; it keeps shining at the same spot.</p>
+          <button onClick={() => onShowLight(light.id)}>Show on stage</button>
+        </>
+      )}
+      <label className="field">
+        Color
+        <input type="color" value={light.color} onChange={(event) => updateLight({ color: event.target.value })} />
+      </label>
+      {light.kind === 'ambient' && (
+        <label className="field">
+          Floor bounce color
+          <input type="color" value={light.groundColor ?? light.color} onChange={(event) => updateLight({ groundColor: event.target.value })} />
+        </label>
+      )}
+      <Slider label="Brightness" min={0} max={MAX_INTENSITY} step={0.05} value={light.intensity} onChange={(intensity) => updateLight({ intensity })} />
+      {light.kind !== 'ambient' && (
+        <>
+          <Slider label="Around" unit="°" min={-180} max={180} step={1} value={placement.aroundDegrees} onChange={(aroundDegrees) => place({ aroundDegrees })} />
+          <Slider label="Height" unit="°" min={-30} max={89} step={1} value={placement.heightDegrees} onChange={(heightDegrees) => place({ heightDegrees })} />
+          <Slider label="Distance" unit=" m" min={0.3} max={10} step={0.05} value={placement.distance} onChange={(distance) => place({ distance })} />
+          <Slider
+            label="Aim height"
+            unit=" m"
+            min={0}
+            max={2.5}
+            step={0.01}
+            value={light.target[1]}
+            onChange={(height) => {
+              const target: LightEntry['target'] = [light.target[0], height, light.target[2]];
+              updateLight({ target, position: positionFromPlacement(target, placement) });
+            }}
+          />
+        </>
+      )}
+      {light.kind === 'spot' && (
+        <>
+          <Slider label="Cone" unit="°" min={5} max={80} step={1} value={light.coneDegrees ?? 35} onChange={(coneDegrees) => updateLight({ coneDegrees })} />
+          <Slider label="Soft edge" min={0} max={1} step={0.05} value={light.softness ?? 0.4} onChange={(softness) => updateLight({ softness })} />
+        </>
+      )}
+      <div className="row">
+        {light.kind !== 'ambient' && (
+          <button className={light.castShadow ? 'is-active' : ''} onClick={() => updateLight({ castShadow: !light.castShadow })}>
+            Shadows {light.castShadow ? 'on' : 'off'}
+          </button>
+        )}
+        <button onClick={() => onToggleLock({ kind: 'light', id: light.id })} title="A locked light can't be clicked or moved (key L)">
+          Lock
+        </button>
+        <button className="danger" onClick={() => onRemoveObject({ kind: 'light', id: light.id })} title="Key Delete">
+          Remove
+        </button>
+      </div>
+    </>
+  );
+}
+
+function SceneCard({ background, selected, onChangeLights, onChangeBackground, onSelectObject }: PanelProps) {
+  return (
+    <>
+      <p className="hint">Everything in the scene is in the list. "+ Add" adds characters, furniture and lights.</p>
+      <h3>Lighting</h3>
+      <p className="hint">A preset replaces all lights.</p>
       <div className="tiles">
         {LIGHT_PRESETS.map((preset) => (
           <Tile
@@ -993,101 +1006,32 @@ function LightsEditor({ lights, background, selected, selectedLightId, onSelectL
             request={selected ? scenePicture(selected, preset.lights, background) : null}
             onClick={() => {
               onChangeLights(() => preset.lights.map((light) => ({ ...light, id: newLightId() })), 'lights:preset');
-              onSelectLight(null);
+              onSelectObject({ kind: 'scene', id: '' });
             }}
           />
         ))}
       </div>
-
-      <div className="chips">
-        {lights.map((light) => (
-          <button
-            key={light.id}
-            className={light.id === selectedLightId ? 'chip is-active' : 'chip'}
-            style={{ borderColor: light.color }}
-            onClick={() => onSelectLight(light.id === selectedLightId ? null : light.id)}
-          >
-            {labelOf(light)}
-          </button>
-        ))}
-      </div>
-      <div className="row">
-        {LIGHT_KINDS.map(({ kind, label }) => (
-          <button
-            key={kind}
-            onClick={() => {
-              const added = { ...newLight(kind), id: newLightId() };
-              onChangeLights((list) => [...list, added], 'lights:add');
-              onSelectLight(added.id);
-            }}
-          >
-            + {label}
-          </button>
-        ))}
-      </div>
-
-      {selectedLight && placement && (
-        <>
-          <label className="field">
-            Color
-            <input type="color" value={selectedLight.color} onChange={(event) => updateLight({ color: event.target.value })} />
-          </label>
-          {selectedLight.kind === 'ambient' && (
-            <label className="field">
-              Floor bounce color
-              <input type="color" value={selectedLight.groundColor ?? selectedLight.color} onChange={(event) => updateLight({ groundColor: event.target.value })} />
-            </label>
-          )}
-          <Slider label="Brightness" min={0} max={MAX_INTENSITY} step={0.05} value={selectedLight.intensity} onChange={(intensity) => updateLight({ intensity })} />
-          {selectedLight.kind !== 'ambient' && (
-            <>
-              <Slider label="Around" unit="°" min={-180} max={180} step={1} value={placement.aroundDegrees} onChange={(aroundDegrees) => place({ aroundDegrees })} />
-              <Slider label="Height" unit="°" min={-30} max={89} step={1} value={placement.heightDegrees} onChange={(heightDegrees) => place({ heightDegrees })} />
-              <Slider label="Distance" unit=" m" min={0.3} max={10} step={0.05} value={placement.distance} onChange={(distance) => place({ distance })} />
-              <Slider
-                label="Aim height"
-                unit=" m"
-                min={0}
-                max={2.5}
-                step={0.01}
-                value={selectedLight.target[1]}
-                onChange={(height) => {
-                  const target: LightEntry['target'] = [selectedLight.target[0], height, selectedLight.target[2]];
-                  updateLight({ target, position: positionFromPlacement(target, placement) });
-                }}
-              />
-            </>
-          )}
-          {selectedLight.kind === 'spot' && (
-            <>
-              <Slider label="Cone" unit="°" min={5} max={80} step={1} value={selectedLight.coneDegrees ?? 35} onChange={(coneDegrees) => updateLight({ coneDegrees })} />
-              <Slider label="Soft edge" min={0} max={1} step={0.05} value={selectedLight.softness ?? 0.4} onChange={(softness) => updateLight({ softness })} />
-            </>
-          )}
-          <div className="row">
-            {selectedLight.kind !== 'ambient' && (
-              <button className={selectedLight.castShadow ? 'is-active' : ''} onClick={() => updateLight({ castShadow: !selectedLight.castShadow })}>
-                Shadows {selectedLight.castShadow ? 'on' : 'off'}
-              </button>
-            )}
-            <button
-              className="danger"
-              onClick={() => {
-                onChangeLights((list) => list.filter((light) => light.id !== selectedLight.id), 'lights:remove');
-                onSelectLight(null);
-              }}
-            >
-              Remove light
-            </button>
-          </div>
-        </>
-      )}
-
       <label className="field">
         Background
         <input type="color" value={background} onChange={(event) => onChangeBackground(event.target.value)} />
       </label>
-    </section>
+    </>
+  );
+}
+
+function LockedCard({ name, onUnlock, onRemove }: { name: string; onUnlock: () => void; onRemove: () => void }) {
+  return (
+    <>
+      <p className="hint lock-note">
+        <LockIcon /> {name} is locked: it can't be clicked or moved on the stage.
+      </p>
+      <div className="row">
+        <button onClick={onUnlock}>Unlock</button>
+        <button className="danger" onClick={onRemove}>
+          Remove
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -1124,15 +1068,6 @@ function ImageExport({ onExport }: { onExport: (request: ExportRequest) => void 
 // #endregion
 
 // #region Helpers
-function LockIcon() {
-  return (
-    <svg className="lock-icon" viewBox="0 0 16 16" aria-hidden="true">
-      <path d="M4.5 7V5a3.5 3.5 0 0 1 7 0v2" fill="none" stroke="currentColor" strokeWidth="1.6" />
-      <rect x="3" y="7" width="10" height="7" rx="1.5" fill="currentColor" />
-    </svg>
-  );
-}
-
 function posePicture(profile: CharacterProfile, joints: Pose['joints']): ThumbnailRequest {
   return { profile, pose: { joints }, lights: DEFAULT_LIGHTS, background: THUMBNAIL_BACKGROUND, view: 'three-quarter', size: THUMBNAIL_PIXELS };
 }

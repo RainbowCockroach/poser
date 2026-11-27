@@ -84,7 +84,7 @@ Multipliers are relative to a realistic adult (1 = average). `weight` is −1 (t
 ```
 
 `position` moves the whole character (x/z on the floor, y up). `"locked": true` on a character entry means the app
-won't let it be clicked or moved until it is unlocked; `hold` and `touch` targets still work on it, and `hold` leaves it still.
+won't let it be clicked or moved until it is unlocked (props and lights take `"locked": true` too); `hold` and `touch` targets still work on it, and `hold` leaves it still.
 
 Camera (optional): `"camera": { "position": [1.5, 0.5, 2], "target": [0, 0.9, 0], "lensMm": 24 }` is the view the app
 opens with; `"views"` is a list of the same with a `"name"`. `lensMm` is a full-frame lens (24 wide, 50 normal,

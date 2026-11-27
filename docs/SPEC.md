@@ -118,6 +118,12 @@ no wheel or middle button), so extra buttons and keys are only faster ways.
     parts out" does it on request. A locked character ignores clicks and drags (they reach the camera or whatever is
     behind) until it is unlocked from its name chip; it can still be removed, and is saved as `locked` in scenes.
     Grip was refitted around a 4.5 cm handle crossing the palm slightly diagonally.
+17. ✅ Objects list (like a drawing app's layers): Scene, Camera, then every character, prop and light, each with a
+    lock, and "+ Add" for any kind. It replaces the five mode buttons and the name chips; the card follows the
+    selected object (a character keeps Pose / Library / Body tabs; a prop, a light, the camera and the scene each have
+    their own card). Props and lights can be locked like characters, and locks are saved in scenes. Light markers can be
+    clicked and dragged (they slide at their height and keep their aim); new lamps and spots appear in view near the
+    selected character. On phones the list is a strip along the bottom.
 
 ## Sources
 

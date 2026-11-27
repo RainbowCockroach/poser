@@ -16,8 +16,9 @@ npm run poser -- help   # CLI for agents: render, touch, check, pose (see AGENTS
 - Scenes: "Save scene" writes a `.scene.json` that includes its characters.
 - Share link: one link opens the whole scene (or one character, from Body) on a friend's phone or computer.
   Everything is inside the link after `#`, so nothing is uploaded.
-- Layout: the ☰ menu opens, saves and shares; five modes (Pose, Library, Body, Scene, Camera) on the left
-  (tabs at the bottom on phones); the card on the right shows only what the mode and the selected part need.
+- Layout: the ☰ menu opens, saves and shares. The objects list on the left (a strip at the bottom on phones) has
+  the scene, the camera and every character, prop and light, each with a lock; "+ Add" adds any of them. The card
+  on the right shows what the selected object can do (a character has Pose, Library and Body tabs).
 - Posing: drag a body part to bend it; drag a hand or foot to move the whole limb; drag the hips to move
   the character ("Pin feet" keeps the feet planted). Undo with Ctrl/Cmd+Z.
 - Handles: a ring to twist the selected part and a ring on the floor to turn the character; pinned hands and
@@ -32,8 +33,10 @@ npm run poser -- help   # CLI for agents: render, touch, check, pose (see AGENTS
 - Touch: press "Touch…" (card or right-click menu) and pick both parts from the lists, on any character, or click
   the part to touch on the stage. Or drag a hand close to a body part until it lights up and let go.
 - A hand touching another character's hand holds it: both reach, palms meet and the fingers close (CLI: `hold`).
-- Lock a character (Pose card, right-click menu or L) so clicks and drags pass it by; its name at the top unlocks or
-  removes it. Remove a character with Delete, the right-click menu or the Pose card; undo brings it back.
+- Lock any object with its lock in the list (or L) so clicks and drags pass it by; it stays listed and can be
+  unlocked or removed there. Remove the selected object with Delete or its card; undo brings it back.
+- Lights: click a light's ball on the stage, or its row, and drag the ball to move it; "Show on stage" brings an
+  off-screen light into view.
 - Touch: put a hand on a knee or a foot (the body bends over if it has to), a chest on someone's back; "Fix overlaps" pulls limbs out of bodies.
 - Props: chair, stool, box, step, wall and table; drag them around, sit or stand on them.
 - Camera: pick a lens (wide 24 mm to portrait 85 mm; the characters keep their size) and save views to come back to.

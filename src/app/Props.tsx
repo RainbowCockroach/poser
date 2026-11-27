@@ -15,6 +15,8 @@ import type { Vec3 } from '../core/rig';
 // #region Types and config
 export interface PropEntry extends SceneProp {
   id: string;
+  // Locked props ignore the pointer, so they can't be picked or dragged by accident.
+  isLocked?: boolean;
 }
 
 interface PropMeshesProps {
@@ -36,6 +38,7 @@ export function PropMeshes({ props, selectedPropId, isExporting, onSelect, onMov
   const controls = useThree((state) => state.controls) as { enabled: boolean } | null;
 
   const startDrag = (prop: PropEntry, event: ThreeEvent<PointerEvent>) => {
+    if (prop.isLocked) return;
     event.stopPropagation();
     // Right and middle buttons, and Alt with the left one, stay with the camera.
     if (event.nativeEvent.button !== 0 || event.nativeEvent.altKey) return;
