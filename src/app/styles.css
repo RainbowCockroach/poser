@@ -475,7 +475,8 @@ select,
     order: 3;
     flex-direction: row;
     justify-content: space-around;
-    padding: 4px max(4px, env(safe-area-inset-right)) max(4px, env(safe-area-inset-bottom)) max(4px, env(safe-area-inset-left));
+    /* Some Android browsers report the system button bar as a safe area they don't draw under; 20 px still clears an iPhone's home bar line. */
+    padding: 2px max(4px, env(safe-area-inset-right)) min(20px, max(2px, env(safe-area-inset-bottom))) max(4px, env(safe-area-inset-left));
     border-width: 1px 0 0;
     border-radius: 0;
     box-shadow: none;
@@ -493,7 +494,7 @@ select,
     right: auto;
     order: 2;
     width: auto;
-    max-height: 42dvh;
+    max-height: 36dvh;
     border-width: 1px 0 0;
     border-radius: 14px 14px 0 0;
     box-shadow: 0 -2px 12px #0001;
@@ -501,6 +502,53 @@ select,
 
   .stage {
     order: 1;
+  }
+
+  .card-header {
+    padding: 2px 4px 2px 14px;
+    font-size: 15px;
+  }
+
+  .card-body {
+    padding: 0 14px 12px;
+  }
+
+  .card-hint {
+    display: none;
+  }
+
+  .app {
+    --gap: 6px;
+    --top: calc(max(var(--gap), env(safe-area-inset-top)) + 40px);
+  }
+
+  .topbar-group,
+  .character-chips {
+    gap: 4px;
+  }
+
+  .topbar button,
+  .topbar .chip {
+    min-height: 36px;
+    padding: 4px 10px;
+    font-size: 14px;
+  }
+
+  .topbar-group > button,
+  .menu > button {
+    min-width: 36px;
+    padding: 4px 8px;
+    font-size: 18px;
+  }
+
+  .modes button {
+    min-height: 40px;
+    padding: 6px 2px;
+  }
+
+  .stage-notice {
+    bottom: 8px;
+    font-size: 13px;
   }
 }
 
@@ -678,14 +726,18 @@ select,
 }
 /* #endregion */
 
-/* #region Stage notices and tips */
-.stage-notice,
-.guide {
+/* #region Stage notice and tips */
+.stage-notice {
   position: absolute;
   z-index: 3;
   left: 50%;
   bottom: max(16px, env(safe-area-inset-bottom));
   transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100% - 24px);
+  padding: 6px 6px 6px 14px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);
@@ -693,34 +745,26 @@ select,
   font-size: 14px;
 }
 
-.stage-notice {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 6px 6px 14px;
-  white-space: nowrap;
-}
-
 .guide {
-  width: min(360px, calc(100% - 24px));
-  padding: 12px 16px 14px;
+  margin: 8px 0 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  font-size: 14px;
 }
 
 .guide p {
   margin: 4px 0 0;
-  color: var(--muted);
   line-height: 1.4;
+}
+
+.guide .row {
+  margin-top: 8px;
 }
 
 .guide-count {
   float: right;
   color: var(--muted);
   font-size: 12px;
-}
-
-/* The guide sits higher so a notice under it stays readable. */
-.guide + .stage-notice,
-.stage-notice + .guide {
-  bottom: calc(max(16px, env(safe-area-inset-bottom)) + 60px);
 }
 /* #endregion */

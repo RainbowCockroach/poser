@@ -20,6 +20,7 @@ import { newProp, normalizeProp, PROP_KINDS, propBoxes, MAX_PROP_SIZE, MIN_PROP_
 import type { PropEntry } from './Props';
 import { motionWords, partName } from './labels';
 import { THUMBNAIL_PIXELS, Tile, type ThumbnailRequest } from './Thumbnail';
+import { Guide } from './Guide';
 import { LENS_PRESETS, MAX_LENS_MM, MIN_LENS_MM, normalizeView, type CameraView } from '../core/camera';
 import { DEFAULT_BACKGROUND, newCharacterId, newLightId, newPropId, type ExportRequest, type LightEntry, type SceneCharacter, type SceneFile, type SceneState } from './App';
 // #endregion
@@ -415,6 +416,7 @@ export function Panel(props: PanelProps) {
           </button>
         </header>
         <div className="card-body">
+          <Guide />
           {isEmptyCharacterMode && (
             <>
               <p className="hint">No character yet.</p>
@@ -539,7 +541,7 @@ function PoseCard(props: PoseCardProps) {
         </>
       ) : (
         <>
-          <p className="hint">Drag any body part to pose it. Drag a ring to twist or turn. Right-click or hold a part for more.</p>
+          <p className="hint card-hint">Drag any body part to pose it. Drag a ring to twist or turn. Right-click or hold a part for more.</p>
           <div className="row">
             <button onClick={() => setPose({ joints: joints.pelvis?.turn ? { pelvis: { turn: joints.pelvis.turn } } : {} })} title="Key Shift R">
               Reset pose

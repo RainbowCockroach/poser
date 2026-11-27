@@ -23,7 +23,6 @@ import { dropToFloor, type Pin } from '../core/reach';
 import { BODY_PARTS, findOverlaps, separate, touch } from '../core/body';
 import { DEFAULT_LIGHTS, type SceneLight } from '../core/lights';
 import { pinOfBone, useDragPosing, type TouchTarget } from './useDragPosing';
-import { Guide } from './Guide';
 import { Handles } from './Handles';
 import { PropMeshes, type PropEntry } from './Props';
 import { propBoxes, type SceneProp } from '../core/props';
@@ -457,7 +456,6 @@ export function App() {
             )}
           </div>
         )}
-        {!isCleanView && <Guide />}
         {isCleanView && (
           <button className="show-controls" onClick={() => setIsCleanView(false)}>
             Show controls

@@ -1,6 +1,6 @@
 /*
- * Three short tips on the stage the first time someone opens Poser, replacing the paragraph that used to explain
- * dragging. Seen once per browser (localStorage); the "?" sheet has the full list afterwards.
+ * Three short tips at the top of the card the first time someone opens Poser (in the card, not on the stage, so
+ * they never cover the figure on a phone). Seen once per browser (localStorage); the "?" sheet has the full list afterwards.
  */
 
 // #region Setup
