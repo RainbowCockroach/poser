@@ -29,6 +29,7 @@ npm run poser -- help   # CLI for agents: render, touch, check, pose (see AGENTS
 - Pictures: poses, hand shapes, lenses and light presets are tiles drawn on the selected character.
 - Poses: presets in `poses/*.pose.json`, plus "My poses" saved in the browser and shareable as `.pose.json`.
 - Hands: one tap for a fist, point, peace sign, grip or pinch, on one hand or both.
+- Drag a hand close to a body part (or toward one it can't reach): it lights up, let go and they touch.
 - Touch: put a hand on a knee or a foot (the body bends over if it has to), a chest on someone's back; "Fix overlaps" pulls limbs out of bodies.
 - Props: chair, stool, box, step, wall and table; drag them around, sit or stand on them.
 - Camera: pick a lens (wide 24 mm to portrait 85 mm; the characters keep their size) and save views to come back to.

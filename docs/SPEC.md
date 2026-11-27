@@ -97,8 +97,11 @@ no wheel or middle button), so extra buttons and keys are only faster ways.
 13. ✅ Pictures: thumbnails for poses (presets and My poses), hand shapes, lenses and light presets, drawn on the
     selected character's own body by the CLI ray tracer in a web worker (`src/app/thumbnails.worker.ts`), one at a time
     and cached; `src/cli/png.ts` holds the Node-only PNG encoding so `render.ts` runs in the browser too.
-14. Touch by dragging a hand onto a body part; a first-run guide on the stage; pencil poses while fingers move the
-    camera (optional).
+14. ✅ Touch by dragging: a dragged hand or foot that comes within 15 cm of a part under the pointer, or strains
+    toward one it can't reach (up to 1 m), lights it up; letting go runs `touch` (the end quarter of a limb counts as
+    the joint, so the lower thigh means the knee). Overlaps show as a notice on the stage with a Fix button. Three
+    first-run tips replace the hint paragraph. A setting in the "?" sheet makes only a pencil pose, fingers then
+    only move the camera.
 
 ## Sources
 

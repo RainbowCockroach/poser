@@ -29,13 +29,16 @@ const DOUBLE_PRESS_PIXELS = 24;
 interface MannequinProps {
   profile: CharacterProfile;
   pose: Pose;
+  characterId: string;
   highlightedBones: string[];
+  targetBone: string | null;
+  isPencilOnly: boolean;
   onGrab: (grab: Grab) => void;
   onLookCloser: (bone: string) => void;
   onMenu: (bone: string, clientX: number, clientY: number) => void;
 }
 
-export function Mannequin({ profile, pose, highlightedBones, onGrab, onLookCloser, onMenu }: MannequinProps) {
+export function Mannequin({ characterId, profile, pose, highlightedBones, targetBone, isPencilOnly, onGrab, onLookCloser, onMenu }: MannequinProps) {
   const rig = useMemo(() => buildRig(profile), [profile]);
   const camera = useThree((state) => state.camera);
   const viewportHeight = useThree((state) => state.size.height);
@@ -51,6 +54,7 @@ export function Mannequin({ profile, pose, highlightedBones, onGrab, onLookClose
       joint: new MeshStandardMaterial({ color: base.clone().multiplyScalar(0.82), roughness: 0.5 }),
       accent: new MeshStandardMaterial({ color: base.clone().multiplyScalar(0.35), roughness: 0.6 }),
       highlight: new MeshStandardMaterial({ color: '#ff8a3d', emissive: '#ff6a00', emissiveIntensity: 0.25, roughness: 0.5 }),
+      target: new MeshStandardMaterial({ color: '#7d79f0', emissive: '#3d4fd6', emissiveIntensity: 0.35, roughness: 0.5 }),
       hover: new MeshStandardMaterial({ color: base.clone().lerp(new Color('#ffffff'), 0.3), emissive: '#ff6a00', emissiveIntensity: 0.12, roughness: 0.6 }),
     };
   }, [profile.color]);
@@ -92,7 +96,7 @@ export function Mannequin({ profile, pose, highlightedBones, onGrab, onLookClose
         const mesh = new Mesh(shapeGeometry(shape), material);
         mesh.castShadow = true;
         mesh.receiveShadow = true;
-        mesh.userData = { bone: bone.name, material };
+        mesh.userData = { bone: bone.name, material, isJoint: shape.kind === 'ball' };
         group.add(mesh);
         meshes.push(mesh);
       }
@@ -116,10 +120,14 @@ export function Mannequin({ profile, pose, highlightedBones, onGrab, onLookClose
     for (const mesh of model.meshes) {
       const bone: string = mesh.userData.bone;
       const isHovered = hoveredControl !== null && CONTROL_FOR_BONE[bone] === hoveredControl;
-      mesh.material = highlightedBones.includes(bone) ? materials.highlight : isHovered ? materials.hover : mesh.userData.material;
+      mesh.material = bone === targetBone ? materials.target : highlightedBones.includes(bone) ? materials.highlight : isHovered ? materials.hover : mesh.userData.material;
     }
     invalidate();
-  }, [model, materials, highlightedBones, hoveredControl]);
+  }, [model, materials, highlightedBones, hoveredControl, targetBone]);
+
+  useLayoutEffect(() => {
+    model.root.userData.characterId = characterId;
+  }, [model, characterId]);
 
   // The camera can move a part out from under a pointer that stays still (a view key, a closer look), so moving it drops the hover.
   const controls = useThree((state) => state.controls);
@@ -161,8 +169,9 @@ export function Mannequin({ profile, pose, highlightedBones, onGrab, onLookClose
       window.addEventListener('pointerup', handleUp);
       return;
     }
-    // The middle button, and Alt with the left one, stay with the camera.
+    // The middle button, Alt with the left one, and fingers when only the pencil poses, stay with the camera.
     if (event.nativeEvent.button !== 0 || event.nativeEvent.altKey) return;
+    if (isPencilOnly && event.nativeEvent.pointerType === 'touch') return;
 
     const previous = lastPress.current;
     const now = performance.now();

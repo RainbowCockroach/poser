@@ -48,6 +48,7 @@ interface HandlesProps {
   character: SceneCharacter;
   selectedControl: string | null;
   pins: Pin[];
+  isPencilOnly: boolean;
   onGrab: (grab: Grab) => void;
   onMenu: (bone: string, clientX: number, clientY: number) => void;
   onTwist: (control: string, motion: string, degrees: number, startPose: Pose, gestureKey: string) => void;
@@ -55,7 +56,7 @@ interface HandlesProps {
 // #endregion
 
 // #region Main flow
-export function Handles({ character, selectedControl, pins, onGrab, onMenu, onTwist }: HandlesProps) {
+export function Handles({ character, selectedControl, pins, isPencilOnly, onGrab, onMenu, onTwist }: HandlesProps) {
   const camera = useThree((state) => state.camera);
   const canvas = useThree((state) => state.gl.domElement);
   const controls = useThree((state) => state.controls) as { enabled: boolean } | null;
@@ -67,7 +68,7 @@ export function Handles({ character, selectedControl, pins, onGrab, onMenu, onTw
   const worldPointOf = (bone: string, localPoint: Vec3) => new Vector3(...localPoint).applyQuaternion(world[bone].quaternion).add(world[bone].position);
 
   const grabSpot = (spot: Spot, event: ReactPointerEvent) => {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || (isPencilOnly && event.pointerType === 'touch')) return;
     event.preventDefault();
     event.stopPropagation();
     onGrab({
@@ -83,8 +84,8 @@ export function Handles({ character, selectedControl, pins, onGrab, onMenu, onTw
 
   // Turning follows the pointer's angle around the ring's middle on screen, so a drag along the ring feels like turning a dial.
   const startTwist = (event: ThreeEvent<PointerEvent>, control: string, motion: string, center: Vector3, axis: Vector3) => {
+    if (event.nativeEvent.button !== 0 || (isPencilOnly && event.nativeEvent.pointerType === 'touch')) return;
     event.stopPropagation();
-    if (event.nativeEvent.button !== 0) return;
     const bounds = canvas.getBoundingClientRect();
     const projected = center.clone().project(camera);
     const centerX = bounds.left + ((projected.x + 1) / 2) * bounds.width;

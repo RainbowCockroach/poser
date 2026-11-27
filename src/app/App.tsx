@@ -20,8 +20,10 @@ import { SceneLights } from './SceneLights';
 import { buildRig, normalizeProfile, type CharacterProfile } from '../core/rig';
 import { CONTROL_FOR_BONE, CONTROLS, copyLimbToOtherSide, forwardKinematics, mirrorPose, solvePose, type Pose } from '../core/pose';
 import { dropToFloor, type Pin } from '../core/reach';
+import { BODY_PARTS, findOverlaps, separate, touch } from '../core/body';
 import { DEFAULT_LIGHTS, type SceneLight } from '../core/lights';
-import { pinOfBone, useDragPosing } from './useDragPosing';
+import { pinOfBone, useDragPosing, type TouchTarget } from './useDragPosing';
+import { Guide } from './Guide';
 import { Handles } from './Handles';
 import { PropMeshes, type PropEntry } from './Props';
 import { propBoxes, type SceneProp } from '../core/props';
@@ -82,6 +84,9 @@ const DOUBLE_CLICK_MILLISECONDS = 350;
 const MIN_FRAME_RADIUS = 0.12;
 const FRAME_MARGIN = 0.08;
 const THREE_QUARTER_DEGREES = 35;
+const PENCIL_ONLY_STORAGE_KEY = 'poser.pencilOnly';
+// Overlaps are checked this long after the last change, not on every frame of a drag.
+const OVERLAP_CHECK_MILLISECONDS = 400;
 // On screens wider than phones the mode rail and the card float over the stage; these match styles.css (rail and card plus gaps).
 const WIDE_STAGE_PIXELS = 760;
 const RAIL_SPACE_PIXELS = 94;
@@ -119,6 +124,16 @@ export function App() {
   const [isFrontView, setIsFrontView] = useState(false);
   // Pinned hands and feet per character; part of the editing, not of the scene file.
   const [pins, setPins] = useState<Record<string, Pin[]>>({});
+  const [touchTarget, setTouchTarget] = useState<TouchTarget | null>(null);
+  const [touchMessage, setTouchMessage] = useState('');
+  const [overlapCount, setOverlapCount] = useState(0);
+  const [isPencilOnly, setIsPencilOnly] = useState(() => {
+    try {
+      return localStorage.getItem(PENCIL_ONLY_STORAGE_KEY) === 'yes';
+    } catch {
+      return false;
+    }
+  });
   const [partMenu, setPartMenu] = useState<{ characterId: string; bone: string; clientX: number; clientY: number } | null>(null);
   const [exportRequest, setExportRequest] = useState<ExportRequest | null>(null);
   const [sceneVersion, setSceneVersion] = useState(0);
@@ -213,6 +228,45 @@ export function App() {
 
   const selected = characters.find((character) => character.id === selectedId) ?? null;
   const selectedPins = selected ? (pins[selected.id] ?? []) : [];
+  const latestCharacters = useRef(characters);
+  latestCharacters.current = characters;
+
+  // A whole-body lean can take a second or more on a phone; the message shows before the page is busy.
+  const touchOnDrop = (character: SceneCharacter, part: string, target: TouchTarget) => {
+    const targetName = BODY_PARTS[target.part]?.label.toLowerCase() ?? target.part;
+    console.log(`Touch on drop: ${character.profile.name} ${part} → ${target.part} (${target.bone})`);
+    setTouchMessage(`Touching the ${targetName}…`);
+    setTimeout(() => {
+      const list = latestCharacters.current.map((entry) => (entry.id === character.id ? character : entry));
+      const posed = list.map((entry) => ({ name: entry.profile.name, rig: buildRig(entry.profile), pose: entry.pose }));
+      const index = list.findIndex((entry) => entry.id === character.id);
+      const targetIndex = list.findIndex((entry) => entry.id === target.characterId);
+      try {
+        const touched = touch(posed, index, part, targetIndex, target.part);
+        updateCharacter(character.id, { pose: touched.pose }, 'touch');
+        const gap = Math.round(Math.abs(touched.gapMeters) * 100);
+        setTouchMessage(gap < 1 ? '' : `Got within ${gap} cm of the ${targetName}; the joints can't reach further.`);
+      } catch (error) {
+        setTouchMessage((error as Error).message);
+      }
+    }, 30);
+  };
+
+  useEffect(() => {
+    if (!touchMessage || touchMessage.endsWith('…')) return;
+    const timer = setTimeout(() => setTouchMessage(''), 4000);
+    return () => clearTimeout(timer);
+  }, [touchMessage]);
+
+  useEffect(() => {
+    if (!selected) return setOverlapCount(0);
+    const timer = setTimeout(() => {
+      const posed = characters.map((entry) => ({ name: entry.profile.name, rig: buildRig(entry.profile), pose: entry.pose }));
+      const index = characters.findIndex((entry) => entry.id === selected.id);
+      setOverlapCount(findOverlaps(posed).filter((overlap) => overlap.character === index || overlap.otherCharacter === index).length);
+    }, OVERLAP_CHECK_MILLISECONDS);
+    return () => clearTimeout(timer);
+  }, [characters, selected?.id]);
   const isPinFeet = selectedPins.includes('foot_l') && selectedPins.includes('foot_r');
   const togglePin = (characterId: string, pin: Pin) =>
     setPins((current) => {
@@ -351,6 +405,10 @@ export function App() {
             }}
             isFrontView={isFrontView}
             isShowingHandles={mode === 'pose' && !isCleanView}
+            touchTarget={touchTarget}
+            isPencilOnly={isPencilOnly}
+            onTouchTarget={setTouchTarget}
+            onTouchDrop={touchOnDrop}
             selectedControl={selectedControl}
             pins={pins}
             onMenu={(characterId, bone, clientX, clientY) => {
@@ -376,6 +434,22 @@ export function App() {
             onPose={(id, pose, gestureKey) => updateCharacter(id, { pose }, gestureKey)}
           />
         </Canvas>
+        {(touchMessage || (overlapCount > 0 && mode === 'pose' && selected)) && !isCleanView && (
+          <div className="stage-notice" role="status">
+            {touchMessage || `${selected?.profile.name}: ${overlapCount === 1 ? 'a body part sinks' : `${overlapCount} body parts sink`} into another`}
+            {!touchMessage && selected && (
+              <button
+                onClick={() => {
+                  const posed = characters.map((entry) => ({ name: entry.profile.name, rig: buildRig(entry.profile), pose: entry.pose }));
+                  updateCharacter(selected.id, { pose: separate(posed, characters.indexOf(selected)) }, 'separate');
+                }}
+              >
+                Fix
+              </button>
+            )}
+          </div>
+        )}
+        {!isCleanView && <Guide />}
         {isCleanView && (
           <button className="show-controls" onClick={() => setIsCleanView(false)}>
             Show controls
@@ -417,6 +491,15 @@ export function App() {
       })()}
       {isHelpOpen && (
         <Help
+          isPencilOnly={isPencilOnly}
+          onChangePencilOnly={(isOn) => {
+            setIsPencilOnly(isOn);
+            try {
+              localStorage.setItem(PENCIL_ONLY_STORAGE_KEY, isOn ? 'yes' : 'no');
+            } catch {
+              // Only a convenience; the setting still works for this visit.
+            }
+          }}
           onClose={() => setIsHelpOpen(false)}
           onHideControls={() => {
             setIsHelpOpen(false);
@@ -512,6 +595,10 @@ interface StageProps {
   onLookCloser: (character: SceneCharacter, bone: string) => void;
   isFrontView: boolean;
   isShowingHandles: boolean;
+  touchTarget: TouchTarget | null;
+  isPencilOnly: boolean;
+  onTouchTarget: (target: TouchTarget | null) => void;
+  onTouchDrop: (character: SceneCharacter, part: string, target: TouchTarget) => void;
   selectedControl: string | null;
   pins: Record<string, Pin[]>;
   onMenu: (characterId: string, bone: string, clientX: number, clientY: number) => void;
@@ -546,7 +633,12 @@ function Stage(props: StageProps) {
   const threeScene = useThree((state) => state.scene);
   const camera = useThree((state) => state.camera);
   const invalidate = useThree((state) => state.invalidate);
-  const startDrag = useDragPosing(onPose, (character, bone, clientX, clientY) => props.onMenu(character.id, bone, clientX, clientY));
+  const startDrag = useDragPosing({
+    onPose,
+    onLongPress: (character, bone, clientX, clientY) => props.onMenu(character.id, bone, clientX, clientY),
+    onTouchTarget: props.onTouchTarget,
+    onTouchDrop: props.onTouchDrop,
+  });
   const isExporting = exportRequest !== null;
   const isShowingGuides = !isExporting || exportRequest.isShowingGuides;
 
@@ -674,6 +766,9 @@ function Stage(props: StageProps) {
       {characters.map((character) => (
         <group key={character.id}>
           <Mannequin
+            characterId={character.id}
+            targetBone={props.touchTarget?.characterId === character.id ? props.touchTarget.bone : null}
+            isPencilOnly={props.isPencilOnly}
             profile={character.profile}
             pose={character.pose}
             highlightedBones={character.id === selected?.id && !isExporting ? highlightedBones : []}
@@ -692,6 +787,7 @@ function Stage(props: StageProps) {
               character={character}
               selectedControl={props.selectedControl}
               pins={props.pins[character.id] ?? []}
+              isPencilOnly={props.isPencilOnly}
               onGrab={(grab) => {
                 onSelect(character.id, CONTROL_FOR_BONE[grab.bone] ?? null);
                 startDrag(character, grab, props.pins[character.id] ?? []);

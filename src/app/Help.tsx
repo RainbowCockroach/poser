@@ -9,6 +9,7 @@ const POINTER_ROWS: { action: string; mouse: string; touch: string }[] = [
   { action: 'Twist a part', mouse: 'Drag along the ring around it', touch: 'Drag along the ring around it' },
   { action: 'Turn the character', mouse: 'Drag along the ring on the floor', touch: 'Drag along the ring on the floor' },
   { action: 'Reset, copy, pin a part', mouse: 'Right-click it', touch: 'Hold it still for a moment' },
+  { action: 'Make a hand touch a part', mouse: 'Drag the hand close to it; let go when it lights up', touch: 'The same' },
   { action: 'Turn the camera', mouse: 'Drag empty space, or middle-drag or Alt-drag anywhere', touch: 'Drag empty space' },
   { action: 'Slide the camera', mouse: 'Right-drag', touch: 'Drag with two fingers' },
   { action: 'Zoom', mouse: 'Scroll wheel, toward the pointer', touch: 'Pinch' },
@@ -32,7 +33,14 @@ const KEY_ROWS: { keys: string[]; action: string }[] = [
 // #endregion
 
 // #region Main flow
-export function Help({ onClose, onHideControls }: { onClose: () => void; onHideControls: () => void }) {
+interface HelpProps {
+  isPencilOnly: boolean;
+  onChangePencilOnly: (isOn: boolean) => void;
+  onClose: () => void;
+  onHideControls: () => void;
+}
+
+export function Help({ isPencilOnly, onChangePencilOnly, onClose, onHideControls }: HelpProps) {
   return (
     <div className="help-backdrop" onClick={onClose}>
       <div className="help" role="dialog" aria-label="Shortcuts" onClick={(event) => event.stopPropagation()}>
@@ -73,7 +81,13 @@ export function Help({ onClose, onHideControls }: { onClose: () => void; onHideC
             ))}
           </tbody>
         </table>
-        <button onClick={onHideControls}>Hide the controls</button>
+        <label className="check">
+          <input type="checkbox" checked={isPencilOnly} onChange={(event) => onChangePencilOnly(event.target.checked)} />
+          Only the pencil poses; fingers just move the camera (for a tablet with a pen)
+        </label>
+        <div className="row">
+          <button onClick={onHideControls}>Hide the controls</button>
+        </div>
       </div>
     </div>
   );
