@@ -1,6 +1,7 @@
 /*
  * Poser app shell: the 3D stage on the left (or top on phones) and the edit panel.
- * Scene state lives here: the characters (each a profile and a pose), the props, the lights, the background, plus undo history.
+ * Scene state lives here: the characters (each a profile and a pose), the props, the lights, the background, saved
+ * camera views, plus undo history. The camera itself (position, lens) belongs to the stage and is read when saving.
  * Scenes and characters are saved as JSON files ("poser.scene/1", "poser.character/1") to share.
  * "Save PNG" re-renders the current view without the editing helpers (grid, ruler, light markers).
  * Run: npm run dev
@@ -10,7 +11,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { Grid, Html, OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei';
-import { SRGBColorSpace, TextureLoader, Vector2, type Texture } from 'three';
+import { PerspectiveCamera as ThreePerspectiveCamera, SRGBColorSpace, TextureLoader, Vector2, Vector3, type Texture } from 'three';
 import { Mannequin } from './Mannequin';
 import { Panel } from './Panel';
 import { SceneLights } from './SceneLights';
@@ -20,6 +21,7 @@ import { DEFAULT_LIGHTS, type SceneLight } from '../core/lights';
 import { useDragPosing } from './useDragPosing';
 import { PropMeshes, type PropEntry } from './Props';
 import type { SceneProp } from '../core/props';
+import { DEFAULT_LENS_MM, distanceForLens, fieldOfViewDegrees, type CameraView } from '../core/camera';
 import type { Vec3 } from '../core/rig';
 // #endregion
 
@@ -40,6 +42,7 @@ export interface SceneState {
   sceneProps: PropEntry[];
   lights: LightEntry[];
   background: string;
+  views: CameraView[];
 }
 
 export interface SceneFile {
@@ -48,6 +51,8 @@ export interface SceneFile {
   props?: SceneProp[];
   lights?: SceneLight[];
   background?: string;
+  camera?: CameraView;
+  views?: CameraView[];
 }
 
 export interface ExportRequest {
@@ -62,7 +67,6 @@ const SAMPLE_PROFILES = Object.values(
 
 export const DEFAULT_BACKGROUND = '#eef0f5';
 const CHARACTER_SPACING = 0.9;
-const CAMERA_FIELD_OF_VIEW = 40;
 const RULER_HEIGHT_METERS = 2.5;
 const UNDO_STEPS = 100;
 // Changes with the same key closer together than this are one undo step (one slider drag).
@@ -88,11 +92,12 @@ export function App() {
       sceneProps: [],
       lights: DEFAULT_LIGHTS.map((light) => ({ ...light, id: newLightId() })),
       background: DEFAULT_BACKGROUND,
+      views: [],
     } as SceneState,
     past: [] as SceneState[],
     future: [] as SceneState[],
   }));
-  const { characters, sceneProps, lights, background } = scene.present;
+  const { characters, sceneProps, lights, background, views } = scene.present;
   const lastChange = useRef({ key: '', time: 0 });
   const [selectedId, setSelectedId] = useState<string | null>(() => characters[0]?.id ?? null);
   const [selectedControl, setSelectedControl] = useState<string | null>(null);
@@ -102,6 +107,16 @@ export function App() {
   const [isPinFeet, setIsPinFeet] = useState(false);
   const [exportRequest, setExportRequest] = useState<ExportRequest | null>(null);
   const [sceneVersion, setSceneVersion] = useState(0);
+  const [lensMm, setLensMm] = useState(DEFAULT_LENS_MM);
+  const [cameraJump, setCameraJump] = useState<CameraView | null>(null);
+  // The 3D camera as the user left it, kept up to date by the stage without re-rendering, for saving and "Save this view".
+  const cameraView = useRef<CameraView | null>(null);
+
+  const goToView = (view: CameraView) => {
+    setIsFrontView(false);
+    setLensMm(view.lensMm);
+    setCameraJump(view);
+  };
 
   const changeScene = (update: (state: SceneState) => SceneState, key: string) => {
     const now = performance.now();
@@ -174,6 +189,10 @@ export function App() {
             isPinFeet={isPinFeet}
             exportRequest={exportRequest}
             sceneVersion={sceneVersion}
+            lensMm={lensMm}
+            cameraJump={cameraJump}
+            onCameraJumped={() => setCameraJump(null)}
+            onCameraChange={(view) => (cameraView.current = view)}
             onExported={() => setExportRequest(null)}
             onSelect={(id, control) => {
               setSelectedId(id);
@@ -207,6 +226,15 @@ export function App() {
         onSelectLight={setSelectedLightId}
         onSelectProp={setSelectedPropId}
         onChangeProps={(update, key) => changeScene((state) => ({ ...state, sceneProps: update(state.sceneProps) }), key)}
+        views={views}
+        lensMm={lensMm}
+        onChangeLens={(next) => {
+          setIsFrontView(false);
+          setLensMm(next);
+        }}
+        getCameraView={() => cameraView.current}
+        onGoToView={goToView}
+        onChangeViews={(update, key) => changeScene((state) => ({ ...state, views: update(state.views) }), key)}
         onChangeLights={(update, key) => changeScene((state) => ({ ...state, lights: update(state.lights) }), key)}
         onChangeBackground={(color) => changeScene((state) => ({ ...state, background: color }), 'background')}
         onExport={setExportRequest}
@@ -216,9 +244,10 @@ export function App() {
         }}
         onSelectControl={setSelectedControl}
         onUpdateCharacter={updateCharacter}
-        onReplaceScene={(next) => {
+        onReplaceScene={(next, camera) => {
           changeScene(() => next, 'replace');
           setSceneVersion((version) => version + 1);
+          if (camera) goToView(camera);
           setSelectedId(next.characters[0]?.id ?? null);
           setSelectedControl(null);
           setSelectedLightId(null);
@@ -256,6 +285,10 @@ interface StageProps {
   isPinFeet: boolean;
   exportRequest: ExportRequest | null;
   sceneVersion: number;
+  lensMm: number;
+  cameraJump: CameraView | null;
+  onCameraJumped: () => void;
+  onCameraChange: (view: CameraView) => void;
   onExported: () => void;
   onSelect: (id: string, control: string | null) => void;
   onPose: (id: string, pose: Pose, gestureKey: string) => void;
@@ -269,7 +302,7 @@ function Stage(props: StageProps) {
   // Recomputed only when a whole scene is opened (file or share link), so normal editing never moves the camera.
   const startDistance = useMemo(() => {
     const halfSpread = Math.max(0, ...characters.map((character) => Math.abs(character.pose.position?.[0] ?? 0))) + 0.6;
-    const horizontalHalfTangent = Math.tan((CAMERA_FIELD_OF_VIEW * Math.PI) / 360) * (viewportWidth / Math.max(1, viewportHeight));
+    const horizontalHalfTangent = Math.tan((fieldOfViewDegrees(props.lensMm) * Math.PI) / 360) * (viewportWidth / Math.max(1, viewportHeight));
     return Math.max(5.5, halfSpread / horizontalHalfTangent + 0.5);
   }, [props.sceneVersion]);
   const renderer = useThree((state) => state.gl);
@@ -280,8 +313,52 @@ function Stage(props: StageProps) {
   const isExporting = exportRequest !== null;
   const isShowingGuides = !isExporting || exportRequest.isShowingGuides;
 
+  // Opening a scene swaps in a new camera and controls during this render; reading the store when an effect runs gets the new ones.
+  const getThree = useThree((state) => state.get);
+  const liveCamera = () => {
+    const { camera: current, controls } = getThree();
+    const orbit = controls as unknown as { target: Vector3; update: () => void; enableDamping: boolean } | null;
+    return current instanceof ThreePerspectiveCamera && orbit ? { camera: current, controls: orbit } : null;
+  };
+  const lastLensMm = useRef(props.lensMm);
+
   // Mannequin and light targets move their three.js objects directly, which "demand" drawing doesn't notice.
   useEffect(() => invalidate());
+
+  const reportCamera = () => {
+    const live = liveCamera();
+    if (isFrontView || !live) return;
+    const round = (vector: Vector3) => vector.toArray().map((value) => Math.round(value * 1000) / 1000) as Vec3;
+    props.onCameraChange({ position: round(live.camera.position), target: round(live.controls.target), lensMm: props.lensMm });
+  };
+
+  // A new lens moves the camera closer or further along its line of sight, so the characters keep their size and only the perspective changes.
+  useEffect(() => {
+    const previous = lastLensMm.current;
+    lastLensMm.current = props.lensMm;
+    const live = liveCamera();
+    if (previous === props.lensMm || props.cameraJump || !live) return;
+    const offset = live.camera.position.clone().sub(live.controls.target);
+    const distance = distanceForLens(offset.length(), previous, props.lensMm);
+    live.camera.position.copy(live.controls.target).addScaledVector(offset.normalize(), distance);
+    live.controls.update();
+    reportCamera();
+  }, [props.lensMm]);
+
+  useEffect(() => {
+    const live = liveCamera();
+    if (!props.cameraJump || !live) return;
+    // A spin the user just flicked keeps going (damping) and would carry the camera off the saved view; one undamped update stops it.
+    live.controls.enableDamping = false;
+    live.controls.update();
+    live.camera.position.set(...props.cameraJump.position);
+    live.controls.target.set(...props.cameraJump.target);
+    live.controls.update();
+    live.controls.enableDamping = true;
+    props.onCameraJumped();
+    reportCamera();
+  }, [props.cameraJump, camera]);
+  useEffect(reportCamera, [camera, isFrontView]);
 
   // Runs after React has hidden the helpers, renders one sharper frame by hand and saves it.
   useEffect(() => {
@@ -317,9 +394,9 @@ function Stage(props: StageProps) {
       {isFrontView ? (
         <OrthographicCamera makeDefault position={[focusX, focusHeight / 2, 10]} zoom={viewportHeight / (focusHeight * 1.25)} />
       ) : (
-        <PerspectiveCamera key={props.sceneVersion} makeDefault position={[0.6, 1.5, startDistance]} fov={CAMERA_FIELD_OF_VIEW} />
+        <PerspectiveCamera key={props.sceneVersion} makeDefault position={[0.6, 1.5, startDistance]} fov={fieldOfViewDegrees(props.lensMm)} />
       )}
-      <OrbitControls key={isFrontView ? `front-${focusX}` : `free-${props.sceneVersion}`} target={[isFrontView ? focusX : 0, isFrontView ? focusHeight / 2 : 1, 0]} enableRotate={!isFrontView} makeDefault />
+      <OrbitControls key={isFrontView ? `front-${focusX}` : `free-${props.sceneVersion}`} target={[isFrontView ? focusX : 0, isFrontView ? focusHeight / 2 : 1, 0]} enableRotate={!isFrontView} makeDefault onChange={reportCamera} />
 
       <SceneLights lights={lights} selectedLightId={props.selectedLightId} isShowingMarkers={!isExporting} />
 

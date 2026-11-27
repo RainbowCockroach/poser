@@ -13,6 +13,8 @@ node src/cli/poser.ts render scenes/sample.scene.json --view front --out front.p
 node src/cli/poser.ts render scenes/sample.scene.json --focus hand_r --character Bush   # close-up of one part
 node src/cli/poser.ts hand   scenes/sample.scene.json Potat fist --hand r               # whole hand shape
 node src/cli/poser.ts prop   scenes/sample.scene.json chair --x 0.5 --z 0.2             # then pose Bush "Sit on a chair"
+node src/cli/poser.ts camera scenes/sample.scene.json --position 1.5,0.5,2 --look-at 0,0.9,0 --lens 24 --name "low"
+node src/cli/poser.ts render scenes/sample.scene.json --view low          # or --view three-quarter --lens 85
 node src/cli/poser.ts pose   scenes/sample.scene.json Bush "Sit on a chair"
 node src/cli/poser.ts touch  scenes/sample.scene.json Potat hand_r head --target Bush
 node src/cli/poser.ts check  scenes/sample.scene.json          # body parts sinking into each other
@@ -20,7 +22,8 @@ node src/cli/poser.ts separate scenes/sample.scene.json Potat  # push them back 
 node src/cli/poser.ts link   scenes/sample.scene.json          # a link that opens the scene in the app
 ```
 
-Commands that change a scene overwrite the file unless `--out` is given. Characters are named by
+Commands that change a scene overwrite the file unless `--out` is given. `render` uses the scene's saved camera when
+it has one (the angle the app was left at when the scene was saved or shared), else `three-quarter`. Characters are named by
 `profile.name` or by their number in the scene (first is 0). `render` views: `front`, `three-quarter`,
 `side` (from the character's left), `back`, `top`. The render is a ray-traced stand-in for the app's
 look (same shapes, lights and shadows), about 1–2 s at the default 1200×900.
@@ -80,6 +83,10 @@ Multipliers are relative to a realistic adult (1 = average). `weight` is −1 (t
 ```
 
 `position` moves the whole character (x/z on the floor, y up).
+
+Camera (optional): `"camera": { "position": [1.5, 0.5, 2], "target": [0, 0.9, 0], "lensMm": 24 }` is the view the app
+opens with; `"views"` is a list of the same with a `"name"`. `lensMm` is a full-frame lens (24 wide, 50 normal,
+85 portrait); wide lenses exaggerate depth, which artists use for dramatic poses.
 
 Props (optional `props` list): `{ "kind": "chair", "position": [0.5, 0, 0.2], "turn": 0, "size": [0.45, 0.45, 0.45], "color": "#b9a58c" }`.
 `kind` is `chair`, `stool`, `box`, `step`, `wall` or `table`; `size` is width, height, depth in meters (for a chair

@@ -71,8 +71,10 @@ values, see sources). Coupled motion:
    (a wall behind, a table in front), dragged over the floor or moved with sliders, sized and colored, saved in
    the scene and share links, drawn by the CLI render (`prop` adds one). "Drop to floor" and pose presets land
    on a prop top up to 25 cm above the body's lowest point, so a sitting pose settles onto the seat.
-9. Camera: lens choice (wide 24 mm to portrait 85 mm, since perspective matters for drawing) and saved
-   views in the scene; the CLI renders from the saved view.
+9. ✅ Camera: lens in full-frame mm (14–200, presets 24/35/50/85); a new lens moves the camera along its line of
+   sight so the characters keep their size and only the perspective changes. Named views saved in the scene; the
+   current view is saved with the scene and share links, so they open from the same angle. CLI: `camera` sets it,
+   `render` uses it (or `--view <name>`, `--lens`).
 
 ## Sources
 

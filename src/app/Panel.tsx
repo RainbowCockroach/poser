@@ -1,7 +1,8 @@
 /*
  * Edit panel: pick a character, pose its joints with anatomical sliders, mirror poses, apply poses
  * from the library, shape its body, place it, and open/save scene, character and pose files for sharing.
- * Scene-wide sections below the character: props (chair, wall…), lights (presets or one by one) and saving the view as a PNG.
+ * Scene-wide sections below the character: props (chair, wall…), camera (lens, saved views), lights (presets or one
+ * by one) and saving the view as a PNG.
  * Joint sliders only allow the range a real body can do (limits live in core/pose.ts).
  * "My poses" are kept in this browser (localStorage); download a pose to share it.
  */
@@ -17,6 +18,7 @@ import { buildRig, DEFAULT_PROFILE, normalizeProfile, type CharacterProfile } fr
 import { DEFAULT_LIGHTS, LIGHT_PRESETS, MAX_INTENSITY, newLight, normalizeLight, placementOf, positionFromPlacement, type LightKind, type LightPlacement } from '../core/lights';
 import { newProp, normalizeProp, PROP_KINDS, propBoxes, MAX_PROP_SIZE, MIN_PROP_SIZE, type PropKind } from '../core/props';
 import type { PropEntry } from './Props';
+import { LENS_PRESETS, MAX_LENS_MM, MIN_LENS_MM, normalizeView, type CameraView } from '../core/camera';
 import { DEFAULT_BACKGROUND, newCharacterId, newLightId, newPropId, type ExportRequest, type LightEntry, type SceneCharacter, type SceneFile, type SceneState } from './App';
 // #endregion
 
@@ -73,11 +75,17 @@ interface PanelProps {
   onSelectLight: (id: string | null) => void;
   onSelectProp: (id: string | null) => void;
   onChangeProps: (update: (props: PropEntry[]) => PropEntry[], key: string) => void;
+  views: CameraView[];
+  lensMm: number;
+  onChangeLens: (lensMm: number) => void;
+  getCameraView: () => CameraView | null;
+  onGoToView: (view: CameraView) => void;
+  onChangeViews: (update: (views: CameraView[]) => CameraView[], key: string) => void;
   onUpdateCharacter: (id: string, change: Partial<SceneCharacter>) => void;
   onChangeLights: (update: (lights: LightEntry[]) => LightEntry[], key: string) => void;
   onChangeBackground: (color: string) => void;
   onExport: (request: ExportRequest) => void;
-  onReplaceScene: (scene: SceneState) => void;
+  onReplaceScene: (scene: SceneState, camera?: CameraView) => void;
   onAddCharacter: (profile: CharacterProfile) => void;
   onRemoveCharacter: (id: string) => void;
 }
@@ -120,13 +128,15 @@ export function Panel(props: PanelProps) {
   const openData = (data: { format?: string; name?: string }) => {
     if (data.format === 'poser.scene/1') {
       const scene = data as SceneFile;
+      const camera = typeof scene.camera === 'object' && scene.camera ? (normalizeView(scene.camera) ?? undefined) : undefined;
       props.onReplaceScene({
         characters: scene.characters.map((entry) => ({ id: newCharacterId(), profile: normalizeProfile(entry.profile), pose: entry.pose ?? {} })),
         sceneProps: (Array.isArray(scene.props) ? scene.props.filter((prop) => typeof prop === 'object' && prop) : []).map((prop) => ({ ...normalizeProp(prop), id: newPropId() })),
         // Scenes saved before lights existed get the default lights.
         lights: (Array.isArray(scene.lights) ? scene.lights.filter((light) => typeof light === 'object' && light).map(normalizeLight) : DEFAULT_LIGHTS).map((light) => ({ ...light, id: newLightId() })),
         background: /^#[0-9a-f]{6}$/i.test(scene.background ?? '') ? scene.background! : DEFAULT_BACKGROUND,
-      });
+        views: (Array.isArray(scene.views) ? scene.views : []).flatMap((view) => (typeof view === 'object' && view ? (normalizeView(view) ?? []) : [])),
+      }, camera);
       setMessage(`Opened scene with ${scene.characters.length} characters`);
       return;
     }
@@ -216,13 +226,18 @@ export function Panel(props: PanelProps) {
     }
   };
 
-  const sceneFile = (): SceneFile => ({
-    format: 'poser.scene/1',
-    characters: characters.map(({ profile, pose }) => ({ profile, pose })),
-    ...(props.sceneProps.length > 0 && { props: props.sceneProps.map(({ id: _id, ...prop }) => prop) }),
-    lights: props.lights.map(({ id: _id, ...light }) => light),
-    background: props.background,
-  });
+  const sceneFile = (): SceneFile => {
+    const camera = props.getCameraView();
+    return {
+      format: 'poser.scene/1',
+      characters: characters.map(({ profile, pose }) => ({ profile, pose })),
+      ...(props.sceneProps.length > 0 && { props: props.sceneProps.map(({ id: _id, ...prop }) => prop) }),
+      lights: props.lights.map(({ id: _id, ...light }) => light),
+      background: props.background,
+      ...(camera && { camera }),
+      ...(props.views.length > 0 && { views: props.views }),
+    };
+  };
 
   const saveScene = () => {
     const scene = sceneFile();
@@ -291,6 +306,7 @@ export function Panel(props: PanelProps) {
         )}
 
         <PropsEditor {...props} />
+        <CameraEditor {...props} />
         <LightsEditor {...props} />
         <ImageExport onExport={props.onExport} />
       </div>
@@ -706,6 +722,51 @@ function PropsEditor({ sceneProps, selected, selectedPropId, onSelectProp, onCha
           </div>
         </>
       )}
+    </details>
+  );
+}
+
+function CameraEditor({ views, lensMm, onChangeLens, getCameraView, onGoToView, onChangeViews }: PanelProps) {
+  return (
+    <details>
+      <summary>Camera</summary>
+      <p className="hint">Lens in mm. Wide lenses stretch depth (a hand toward the camera looks huge); long ones flatten it. The characters keep their size on screen.</p>
+      <div className="row">
+        {LENS_PRESETS.map((preset) => (
+          <button key={preset.lensMm} className={Math.round(lensMm) === preset.lensMm ? 'is-active' : ''} onClick={() => onChangeLens(preset.lensMm)}>
+            {preset.label}
+          </button>
+        ))}
+      </div>
+      <Slider label="Lens" unit=" mm" min={MIN_LENS_MM} max={MAX_LENS_MM} step={1} value={Math.round(lensMm)} onChange={onChangeLens} />
+      <div className="row">
+        <button
+          onClick={() => {
+            const current = getCameraView();
+            if (!current) return;
+            const taken = new Set(views.map((view) => view.name));
+            let number = views.length + 1;
+            while (taken.has(`View ${number}`)) number += 1;
+            onChangeViews((list) => [...list, { ...current, name: `View ${number}` }], 'views:add');
+          }}
+          title="Keep this angle and lens in the scene, to come back to it or share it"
+        >
+          Save this view
+        </button>
+      </div>
+      {views.length > 0 && (
+        <div className="row">
+          {views.map((view) => (
+            <span key={view.name} className="pose-chip">
+              <button onClick={() => onGoToView(view)}>{view.name}</button>
+              <button className="danger" title={`Forget ${view.name}`} onClick={() => onChangeViews((list) => list.filter((entry) => entry.name !== view.name), 'views:remove')}>
+                ✕
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <p className="hint">Saved scenes and share links open from the angle you leave the camera at.</p>
     </details>
   );
 }

@@ -18,6 +18,7 @@ import { DEFAULT_LIGHTS, normalizeLight, type SceneLight } from '../core/lights.
 import { BODY_PARTS, findOverlaps, separate, touch, type PosedCharacter, type TouchSide } from '../core/body.ts';
 import { MAX_SHARE_LINK_LENGTH } from '../core/share.ts';
 import { applyHandShape, HAND_SHAPES, type HandSide } from '../core/hands.ts';
+import { normalizeView, type CameraView } from '../core/camera.ts';
 import { newProp, normalizeProp, PROP_KINDS, propBoxes, type PropKind, type SceneProp } from '../core/props.ts';
 import { encodePng, renderScene, VIEWS, type View } from './render.ts';
 // #endregion
@@ -29,6 +30,8 @@ interface SceneFile {
   props?: SceneProp[];
   lights?: SceneLight[];
   background?: string;
+  camera?: CameraView;
+  views?: CameraView[];
 }
 
 type Arguments = Record<string, string | boolean | undefined>;
@@ -60,7 +63,11 @@ const ARGUMENT_HELP: Record<string, string> = {
   side: `which side of the target part: ${SIDES.join(', ')} (default nearest; front/back/left/right are the part's own sides)`,
   pose: 'a .pose.json path, or a preset name from poses/ (e.g. "Sit on a chair")',
   out: 'where to write; default: overwrite the scene file (PNG: next to the scene)',
-  view: `camera: ${Object.keys(VIEWS).join(', ')} (default three-quarter)`,
+  view: `${Object.keys(VIEWS).join(', ')}, "camera" (the view saved in the scene) or the name of a saved view; default: the saved camera if there is one, else three-quarter`,
+  lens: 'lens in mm (24 wide … 85 portrait; default about 33) for the framed views, or the new lens for "camera"',
+  position: 'camera position x,y,z in meters',
+  look_at: 'point the camera looks at, x,y,z in meters (default: 1 m above the middle of the scene)',
+  name: 'also keep this camera as a named view',
   width: 'image width in pixels (default 1200)',
   height: 'image height in pixels (default 900)',
   transparent: 'true for a transparent background',
@@ -81,11 +88,18 @@ const COMMANDS: Record<string, Command> = {
   render: {
     summary: 'Render the scene to a PNG.',
     positional: ['scene'],
-    options: { view: 'string', width: 'number', height: 'number', out: 'string', transparent: 'boolean', focus: 'string', character: 'string' },
+    options: { view: 'string', lens: 'number', width: 'number', height: 'number', out: 'string', transparent: 'boolean', focus: 'string', character: 'string' },
     run: (args) => {
       const scene = readScene(args);
-      const view = (args.view as View | undefined) ?? 'three-quarter';
-      if (!VIEWS[view]) throw new Error(`Unknown view "${view}". Known: ${Object.keys(VIEWS).join(', ')}`);
+      const viewName = typeof args.view === 'string' ? args.view : scene.camera ? 'camera' : 'three-quarter';
+      const savedView = viewName === 'camera' ? scene.camera : scene.views?.find((entry) => entry.name?.toLowerCase() === viewName.toLowerCase());
+      const isPreset = viewName in VIEWS;
+      if (!isPreset && !savedView) {
+        const saved = (scene.views ?? []).map((entry) => entry.name).filter(Boolean);
+        throw new Error(`Unknown view "${viewName}". Known: ${[...Object.keys(VIEWS), ...(scene.camera ? ['camera'] : []), ...saved].join(', ')}`);
+      }
+      const view = (isPreset ? viewName : 'front') as View;
+      const lensMm = args.lens === undefined ? undefined : Number(args.lens);
       const width = clampSize(args.width, 1200);
       const height = clampSize(args.height, 900);
       const rigs = scene.characters.map((entry) => buildRig(entry.profile));
@@ -113,13 +127,13 @@ const COMMANDS: Record<string, Command> = {
           lights: scene.lights ?? DEFAULT_LIGHTS,
           background: scene.background ?? DEFAULT_BACKGROUND,
         },
-        { width, height, view, focus, isTransparent: args.transparent === true || args.transparent === 'true' },
+        { width, height, view, focus, lensMm, camera: isPreset || focus ? undefined : { ...savedView!, lensMm: lensMm ?? savedView!.lensMm }, isTransparent: args.transparent === true || args.transparent === 'true' },
       );
       const png = encodePng(image.width, image.height, image.rgba);
-      const name = focus ? `${view}.${args.focus}` : view;
+      const name = (focus ? `${viewName}.${args.focus}` : viewName).replace(/[^a-z0-9.-]+/gi, '-');
       const out = typeof args.out === 'string' ? args.out : String(args.scene).replace(/(\.scene)?\.json$/, '') + `.${name}.png`;
       writeFileSync(out, png);
-      return { text: `Wrote ${out} (${width}×${height}, ${view} view, ${Math.round(performance.now() - started)} ms)`, png };
+      return { text: `Wrote ${out} (${width}×${height}, ${viewName} view, ${Math.round(performance.now() - started)} ms)`, png };
     },
   },
 
@@ -246,6 +260,30 @@ const COMMANDS: Record<string, Command> = {
     },
   },
 
+  camera: {
+    summary: 'Set the scene camera (what "render" and the app open with); --name also keeps it as a named view. Edits the scene file.',
+    positional: ['scene'],
+    options: { position: 'string', look_at: 'string', lens: 'number', name: 'string', out: 'string' },
+    run: (args) => {
+      const scene = readScene(args);
+      const point = (value: unknown, label: string) => {
+        const numbers = String(value).split(',').map(Number);
+        if (numbers.length !== 3 || numbers.some((entry) => !Number.isFinite(entry))) throw new Error(`--${label} needs three numbers: x,y,z`);
+        return numbers as CameraView['position'];
+      };
+      const position = args.position === undefined ? scene.camera?.position : point(args.position, 'position');
+      if (!position) throw new Error('This scene has no camera yet; give --position x,y,z');
+      const middle = scene.characters.length === 0 ? 0 : scene.characters.reduce((sum, entry) => sum + (entry.pose.position?.[0] ?? 0), 0) / scene.characters.length;
+      const target = args.look_at === undefined ? (scene.camera?.target ?? [middle, 1, 0]) : point(args.look_at, 'look_at');
+      const view = normalizeView({ position, target, lensMm: args.lens === undefined ? scene.camera?.lensMm : Number(args.lens), name: typeof args.name === 'string' ? args.name : undefined });
+      if (!view) throw new Error('The camera position and the point it looks at must be apart');
+      const { name, ...camera } = view;
+      scene.camera = camera;
+      if (name) scene.views = [...(scene.views ?? []).filter((entry) => entry.name !== name), view];
+      return { text: `Camera at ${camera.position.join(', ')} looking at ${camera.target.join(', ')}, ${Math.round(camera.lensMm)} mm${name ? `, kept as "${name}"` : ''}. Wrote ${writeScene(scene, args)}` };
+    },
+  },
+
   link: {
     summary: 'Make a share link that opens the scene in the app (characters, poses and lights included).',
     positional: ['scene'],
@@ -364,6 +402,8 @@ function readScene(args: Arguments): SceneFile {
   return {
     ...data,
     characters: data.characters.map((entry: { profile?: Partial<CharacterProfile>; pose?: Pose }) => ({ ...entry, profile: normalizeProfile(entry.profile ?? {}), pose: entry.pose ?? {} })),
+    camera: typeof data.camera === 'object' && data.camera ? (normalizeView(data.camera) ?? undefined) : undefined,
+    views: Array.isArray(data.views) ? data.views.map((view: Partial<CameraView>) => (typeof view === 'object' && view ? normalizeView(view) : null)).filter(Boolean) : undefined,
     props: Array.isArray(data.props) ? data.props.filter((prop: unknown) => typeof prop === 'object' && prop).map(normalizeProp) : undefined,
     lights: Array.isArray(data.lights) ? data.lights.filter((light: unknown) => typeof light === 'object' && light).map(normalizeLight) : undefined,
     background: /^#[0-9a-f]{6}$/i.test(data.background ?? '') ? data.background : undefined,

@@ -14,6 +14,7 @@ import { forwardKinematics, solvePose, type Pose } from '../core/pose.ts';
 import type { SceneLight } from '../core/lights.ts';
 import type { Rig } from '../core/rig.ts';
 import { propBoxes, type SceneProp } from '../core/props.ts';
+import { fieldOfViewDegrees, type CameraView } from '../core/camera.ts';
 // #endregion
 
 // #region Types and config
@@ -35,6 +36,10 @@ export interface RenderOptions {
   supersample?: number;
   // Frame only these bones of one character (a close-up of a hand, say) instead of the whole scene.
   focus?: { character: number; bones: string[] };
+  // A lens for the framed views; ignored when `camera` is given.
+  lensMm?: number;
+  // An exact camera (a view saved in the app); replaces `view` and the framing.
+  camera?: CameraView;
 }
 
 export const VIEWS: Record<View, Vec3Tuple> = {
@@ -124,10 +129,12 @@ export function renderScene(scene: RenderScene, options: RenderOptions): { width
   if (!focus) box.min.y = 0;
   const target = box.min.clone().add(box.max).multiplyScalar(0.5);
   const aspect = options.width / options.height;
-  const verticalHalf = (FIELD_OF_VIEW_DEGREES * Math.PI) / 360;
-  const viewDirection = new Vector3(...VIEWS[options.view]).normalize();
+  const lensMm = options.camera?.lensMm ?? options.lensMm;
+  const verticalHalf = ((lensMm ? fieldOfViewDegrees(lensMm) : FIELD_OF_VIEW_DEGREES) * Math.PI) / 360;
+  const viewDirection = options.camera ? new Vector3(...options.camera.position).sub(new Vector3(...options.camera.target)).normalize() : new Vector3(...VIEWS[options.view]).normalize();
   const forward = viewDirection.clone().negate();
-  const right = forward.clone().cross(new Vector3(0, 1, 0)).normalize();
+  // Straight down has no "right"; any horizontal direction will do.
+  const right = Math.abs(forward.y) > 0.9999 ? new Vector3(1, 0, 0) : forward.clone().cross(new Vector3(0, 1, 0)).normalize();
   const up = right.clone().cross(forward);
 
   // Back off until every shape fits on screen, with a small margin.
@@ -139,7 +146,7 @@ export function renderScene(scene: RenderScene, options: RenderOptions): { width
     const depth = offset.dot(forward);
     distance = Math.max(distance, (Math.abs(offset.dot(right)) + primitive.boundRadius) / tangentX - depth, (Math.abs(offset.dot(up)) + primitive.boundRadius) / tangentY - depth);
   }
-  const eye = target.clone().addScaledVector(viewDirection, distance);
+  const eye = options.camera ? new Vector3(...options.camera.position) : target.clone().addScaledVector(viewDirection, distance);
   const halfHeight = Math.tan(verticalHalf);
 
   const lights = scene.lights.map((light) => ({ ...light, linear: linearColor(light.color), ground: linearColor(light.groundColor ?? light.color) }));
