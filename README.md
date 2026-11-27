@@ -19,6 +19,7 @@ npm run poser -- help   # CLI for agents: render, touch, check, pose (see AGENTS
 - Posing: drag a body part to bend it; drag a hand or foot to move the whole limb; drag the hips to move
   the character ("Pin feet" keeps the feet planted). Undo with Ctrl/Cmd+Z.
 - Poses: presets in `poses/*.pose.json`, plus "My poses" saved in the browser and shareable as `.pose.json`.
+- Hands: one tap for a fist, point, peace sign, grip or pinch, on one hand or both.
 - Touch: put a hand on a knee, a chest on someone's back; "Fix overlaps" pulls limbs out of bodies.
 - Lights: presets or your own sun, spot, lamp and ambient lights with shadows; saved in the scene.
 - Save image: PNG of the current view, up to 4× sharper, optionally with a transparent background.

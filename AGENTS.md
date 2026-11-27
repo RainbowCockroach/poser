@@ -10,6 +10,8 @@ Needs Node 22.18+ (it runs the TypeScript directly). `scenes/sample.scene.json` 
 ```sh
 node src/cli/poser.ts help                                     # every command and argument
 node src/cli/poser.ts render scenes/sample.scene.json --view front --out front.png
+node src/cli/poser.ts render scenes/sample.scene.json --focus hand_r --character Bush   # close-up of one part
+node src/cli/poser.ts hand   scenes/sample.scene.json Potat fist --hand r               # whole hand shape
 node src/cli/poser.ts pose   scenes/sample.scene.json Bush "Sit on a chair"
 node src/cli/poser.ts touch  scenes/sample.scene.json Potat hand_r head --target Bush
 node src/cli/poser.ts check  scenes/sample.scene.json          # body parts sinking into each other
@@ -25,7 +27,10 @@ look (same shapes, lights and shadows), about 1–2 s at the default 1200×900.
 The same commands are MCP tools (`render` returns the image): `.mcp.json` registers `node src/cli/poser.ts mcp`
 for Claude Code in this repo. A good loop: change the pose, `render`, look, `check`, adjust.
 
-Body parts for `touch` and `check`: `head`, `neck`, `chest`, `belly`, `hips`, and per side (`_l`/`_r`)
+Hand shapes for `hand`: `relaxed`, `fist`, `flat`, `spread`, `point`, `peace`, `grip`, `pinch` (`--hand l|r|both`,
+default both). They set only the finger and thumb controls; `HAND_SHAPES` in `src/core/hands.ts` has the angles.
+
+Body parts for `touch`, `check` and `render --focus`: `head`, `neck`, `chest`, `belly`, `hips`, and per side (`_l`/`_r`)
 `shoulder`, `upper_arm`, `elbow`, `forearm`, `hand`, `thigh`, `knee`, `shin`, `foot`. `touch` bends the
 limb that owns the part (a torso part slides the whole character over the floor instead) and keeps the
 rest of the limb out of the body; `--side front|back|left|right` picks a side of the target part in its

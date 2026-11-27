@@ -17,6 +17,7 @@ import type { Pose, PoseFile } from '../core/pose.ts';
 import { DEFAULT_LIGHTS, normalizeLight, type SceneLight } from '../core/lights.ts';
 import { BODY_PARTS, findOverlaps, separate, touch, type PosedCharacter, type TouchSide } from '../core/body.ts';
 import { MAX_SHARE_LINK_LENGTH } from '../core/share.ts';
+import { applyHandShape, HAND_SHAPES, type HandSide } from '../core/hands.ts';
 import { encodePng, renderScene, VIEWS, type View } from './render.ts';
 // #endregion
 
@@ -43,7 +44,7 @@ interface Command {
   run: (args: Arguments) => CommandResult;
 }
 
-const VERSION = '0.5.0';
+const VERSION = '0.6.0';
 const SITE_URL = 'https://rainbowcockroach.github.io/poser/';
 const DEFAULT_BACKGROUND = '#eef0f5';
 const POSES_FOLDER = new URL('../../poses/', import.meta.url);
@@ -62,6 +63,9 @@ const ARGUMENT_HELP: Record<string, string> = {
   height: 'image height in pixels (default 900)',
   transparent: 'true for a transparent background',
   site: 'the Poser site the link opens (default: the GitHub Pages site)',
+  focus: 'render a close-up of one body part (e.g. hand_l, head, foot_r) of --character (default the first)',
+  shape: `hand shape: ${Object.keys(HAND_SHAPES).join(', ')}`,
+  hand: 'which hand: l, r or both (default both)',
 };
 // #endregion
 
@@ -70,24 +74,42 @@ const COMMANDS: Record<string, Command> = {
   render: {
     summary: 'Render the scene to a PNG.',
     positional: ['scene'],
-    options: { view: 'string', width: 'number', height: 'number', out: 'string', transparent: 'boolean' },
+    options: { view: 'string', width: 'number', height: 'number', out: 'string', transparent: 'boolean', focus: 'string', character: 'string' },
     run: (args) => {
       const scene = readScene(args);
       const view = (args.view as View | undefined) ?? 'three-quarter';
       if (!VIEWS[view]) throw new Error(`Unknown view "${view}". Known: ${Object.keys(VIEWS).join(', ')}`);
       const width = clampSize(args.width, 1200);
       const height = clampSize(args.height, 900);
+      const rigs = scene.characters.map((entry) => buildRig(entry.profile));
+
+      let focus: { character: number; bones: string[] } | undefined;
+      if (typeof args.focus === 'string') {
+        const part = BODY_PARTS[args.focus];
+        if (!part) throw new Error(`Unknown body part "${args.focus}". Known: ${Object.keys(BODY_PARTS).join(', ')}`);
+        const character = args.character === undefined ? 0 : characterIndex(scene, args.character);
+        const side = args.focus.match(/_(l|r)$/)?.[1];
+        // A hand or foot close-up includes the fingers or toes; a head close-up includes the neck.
+        const belongs = (bone: string) =>
+          bone === part.bone ||
+          (args.focus === `hand_${side}` && new RegExp(`^(thumb|index|middle|ring|pinky)_\\d_${side}$`).test(bone)) ||
+          (args.focus === `foot_${side}` && bone === `toes_${side}`) ||
+          (args.focus === 'head' && bone === 'neck');
+        focus = { character, bones: rigs[character].bones.map((bone) => bone.name).filter(belongs) };
+      }
+
       const started = performance.now();
       const image = renderScene(
         {
-          characters: scene.characters.map((entry) => ({ rig: buildRig(entry.profile), pose: entry.pose })),
+          characters: scene.characters.map((entry, index) => ({ rig: rigs[index], pose: entry.pose })),
           lights: scene.lights ?? DEFAULT_LIGHTS,
           background: scene.background ?? DEFAULT_BACKGROUND,
         },
-        { width, height, view, isTransparent: args.transparent === true || args.transparent === 'true' },
+        { width, height, view, focus, isTransparent: args.transparent === true || args.transparent === 'true' },
       );
       const png = encodePng(image.width, image.height, image.rgba);
-      const out = typeof args.out === 'string' ? args.out : String(args.scene).replace(/(\.scene)?\.json$/, '') + `.${view}.png`;
+      const name = focus ? `${view}.${args.focus}` : view;
+      const out = typeof args.out === 'string' ? args.out : String(args.scene).replace(/(\.scene)?\.json$/, '') + `.${name}.png`;
       writeFileSync(out, png);
       return { text: `Wrote ${out} (${width}×${height}, ${view} view, ${Math.round(performance.now() - started)} ms)`, png };
     },
@@ -181,6 +203,21 @@ const COMMANDS: Record<string, Command> = {
       if (turn) joints.pelvis = { ...joints.pelvis, turn };
       character.pose = dropToFloor(buildRig(character.profile), { ...character.pose, joints });
       return { text: `${character.profile.name}: ${file.name}. Wrote ${writeScene(scene, args)}` };
+    },
+  },
+
+  hand: {
+    summary: 'Set a whole hand shape (fist, point, grip...) on one or both hands. Edits the scene file.',
+    positional: ['scene', 'character', 'shape'],
+    options: { hand: 'string', out: 'string' },
+    run: (args) => {
+      const scene = readScene(args);
+      const index = characterIndex(scene, args.character);
+      const side = (args.hand as HandSide | undefined) ?? 'both';
+      if (!['l', 'r', 'both'].includes(side)) throw new Error(`Unknown hand "${side}". Use l, r or both`);
+      scene.characters[index].pose = applyHandShape(scene.characters[index].pose, side, String(args.shape));
+      const which = side === 'both' ? 'both hands' : side === 'l' ? 'left hand' : 'right hand';
+      return { text: `${scene.characters[index].profile.name}: ${HAND_SHAPES[String(args.shape)].label.toLowerCase()} on ${which}. Wrote ${writeScene(scene, args)}` };
     },
   },
 

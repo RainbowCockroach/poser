@@ -11,6 +11,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { CONTROLS, mirrorPose, type Pose, type PoseFile } from '../core/pose';
 import { dropToFloor } from '../core/reach';
 import { MAX_SHARE_LINK_LENGTH, packForLink, readShareHash, shareLink, unpackFromLink, type SharedKind } from '../core/share';
+import { applyHandShape, HAND_SHAPES, type HandSide } from '../core/hands';
 import { BODY_PARTS, findOverlaps, separate, touch, type PosedCharacter, type TouchSide } from '../core/body';
 import { buildRig, DEFAULT_PROFILE, normalizeProfile, type CharacterProfile } from '../core/rig';
 import { DEFAULT_LIGHTS, LIGHT_PRESETS, MAX_INTENSITY, newLight, normalizeLight, placementOf, positionFromPlacement, type LightKind, type LightPlacement } from '../core/lights';
@@ -35,6 +36,11 @@ const PROPORTION_SLIDERS: { key: keyof CharacterProfile['proportions']; label: s
 ];
 
 const TOUCH_SIDES: TouchSide[] = ['nearest', 'front', 'back', 'left', 'right'];
+const HAND_SIDES: { side: HandSide; label: string }[] = [
+  { side: 'both', label: 'Both hands' },
+  { side: 'l', label: 'Left hand' },
+  { side: 'r', label: 'Right hand' },
+];
 
 const LIGHT_KINDS: { kind: LightKind; label: string }[] = [
   { kind: 'sun', label: 'Sun' },
@@ -295,6 +301,7 @@ function CharacterEditor(props: CharacterEditorProps) {
   const { selected, selectedControl, onSelectControl, onUpdateCharacter, onRemoveCharacter, myPoses, onApplyPose, onSaveMyPoses } = props;
   const { profile, pose } = selected;
   const [poseName, setPoseName] = useState('');
+  const [handSide, setHandSide] = useState<HandSide>('both');
   const position = pose.position ?? [0, 0, 0];
   const joints = pose.joints ?? {};
   const control = selectedControl ? CONTROLS[selectedControl] : null;
@@ -385,6 +392,22 @@ function CharacterEditor(props: CharacterEditorProps) {
           <button onClick={() => setPose(mirrorPose(pose, 'flip'))} title="Swap left and right">
             Flip
           </button>
+        </div>
+        <div className="row">
+          <select value={handSide} onChange={(event) => setHandSide(event.target.value as HandSide)} aria-label="Which hand">
+            {HAND_SIDES.map(({ side, label }) => (
+              <option key={side} value={side}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="row">
+          {Object.entries(HAND_SHAPES).map(([name, shape]) => (
+            <button key={name} onClick={() => setPose(applyHandShape(pose, handSide, name))}>
+              {shape.label}
+            </button>
+          ))}
         </div>
       </details>
 

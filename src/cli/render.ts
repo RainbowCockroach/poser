@@ -31,6 +31,8 @@ export interface RenderOptions {
   isTransparent?: boolean;
   // 2 = four rays per pixel for smooth edges.
   supersample?: number;
+  // Frame only these bones of one character (a close-up of a hand, say) instead of the whole scene.
+  focus?: { character: number; bones: string[] };
 }
 
 export const VIEWS: Record<View, Vec3Tuple> = {
@@ -45,6 +47,7 @@ type Vec3Tuple = [number, number, number];
 
 interface Primitive {
   kind: 'sphere' | 'ellipsoid' | 'capsule';
+  bone: string;
   // World → local: subtract `origin`, then multiply by `toLocal` (a rotation).
   origin: Vector3;
   toLocal: Matrix3;
@@ -86,19 +89,22 @@ export function renderScene(scene: RenderScene, options: RenderOptions): { width
   const background = linearColor(scene.background);
   const backgroundSrgb = [1, 3, 5].map((start) => parseInt(scene.background.slice(start, start + 2), 16) / 255);
 
-  // Camera: look at the middle of everything, back off along the view direction until it all fits.
-  const box = { min: new Vector3(Infinity, 0, Infinity), max: new Vector3(-Infinity, -Infinity, -Infinity) };
-  for (const group of groups) {
-    for (const primitive of group.primitives) {
-      box.min.min(primitive.boundCenter.clone().subScalar(primitive.boundRadius));
-      box.max.max(primitive.boundCenter.clone().addScalar(primitive.boundRadius));
-    }
+  // Camera: look at the middle of everything (or of the focused bones), back off along the view direction until it all fits.
+  const focus = options.focus;
+  const framed = focus
+    ? (groups[focus.character]?.primitives ?? []).filter((primitive) => focus.bones.includes(primitive.bone))
+    : groups.flatMap((group) => group.primitives);
+  if (focus && framed.length === 0) throw new Error(`Nothing to focus on: no shapes for ${focus.bones.join(', ')}`);
+  const box = { min: new Vector3(Infinity, Infinity, Infinity), max: new Vector3(-Infinity, -Infinity, -Infinity) };
+  for (const primitive of framed) {
+    box.min.min(primitive.boundCenter.clone().subScalar(primitive.boundRadius));
+    box.max.max(primitive.boundCenter.clone().addScalar(primitive.boundRadius));
   }
-  if (groups.length === 0) {
+  if (framed.length === 0) {
     box.min.set(-1, 0, -1);
     box.max.set(1, 1.8, 1);
   }
-  box.min.y = 0;
+  if (!focus) box.min.y = 0;
   const target = box.min.clone().add(box.max).multiplyScalar(0.5);
   const aspect = options.width / options.height;
   const verticalHalf = (FIELD_OF_VIEW_DEGREES * Math.PI) / 360;
@@ -110,13 +116,11 @@ export function renderScene(scene: RenderScene, options: RenderOptions): { width
   // Back off until every shape fits on screen, with a small margin.
   const tangentY = Math.tan(verticalHalf) * 0.92;
   const tangentX = tangentY * aspect;
-  let distance = 1;
-  for (const group of groups) {
-    for (const primitive of group.primitives) {
-      const offset = primitive.boundCenter.clone().sub(target);
-      const depth = offset.dot(forward);
-      distance = Math.max(distance, (Math.abs(offset.dot(right)) + primitive.boundRadius) / tangentX - depth, (Math.abs(offset.dot(up)) + primitive.boundRadius) / tangentY - depth);
-    }
+  let distance = focus ? 0.05 : 1;
+  for (const primitive of framed) {
+    const offset = primitive.boundCenter.clone().sub(target);
+    const depth = offset.dot(forward);
+    distance = Math.max(distance, (Math.abs(offset.dot(right)) + primitive.boundRadius) / tangentX - depth, (Math.abs(offset.dot(up)) + primitive.boundRadius) / tangentY - depth);
   }
   const eye = target.clone().addScaledVector(viewDirection, distance);
   const halfHeight = Math.tan(verticalHalf);
@@ -221,7 +225,7 @@ function groupOf(rig: Rig, pose: Pose): Group {
 
     for (const shape of bone.shapes) {
       const blank: Primitive = {
-        kind: 'sphere', origin: position.clone(), toLocal, toWorld, radius: 0, radii: new Vector3(1, 1, 1), start: new Vector3(), end: new Vector3(),
+        kind: 'sphere', bone: bone.name, origin: position.clone(), toLocal, toWorld, radius: 0, radii: new Vector3(1, 1, 1), start: new Vector3(), end: new Vector3(),
         radiusStart: 0, radiusEnd: 0, squash: new Vector3(1, 1, 1), smallestSquash: 1, boundCenter: new Vector3(), boundRadius: 0, color: base,
       };
       if (shape.kind === 'ball') {
