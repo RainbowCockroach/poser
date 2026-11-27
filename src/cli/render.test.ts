@@ -9,7 +9,8 @@ import { inflateSync } from 'node:zlib';
 import { buildRig, DEFAULT_PROFILE } from '../core/rig.ts';
 import { DEFAULT_LIGHTS } from '../core/lights.ts';
 import { newProp } from '../core/props.ts';
-import { encodePng, renderScene } from './render.ts';
+import { renderScene } from './render.ts';
+import { encodePng } from './png.ts';
 // #endregion
 
 // #region Tests

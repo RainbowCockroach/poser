@@ -26,6 +26,7 @@ npm run poser -- help   # CLI for agents: render, touch, check, pose (see AGENTS
   to look closer, then single fingers can be dragged. Sliders use plain words ("Arm out to the side").
 - Shortcuts: the "?" button lists them (F look closer, 1–4 views, R reset, M mirror, X flip, G drop to floor,
   H hide the controls). Middle-drag or Alt-drag turns the camera even on top of a character.
+- Pictures: poses, hand shapes, lenses and light presets are tiles drawn on the selected character.
 - Poses: presets in `poses/*.pose.json`, plus "My poses" saved in the browser and shareable as `.pose.json`.
 - Hands: one tap for a fist, point, peace sign, grip or pinch, on one hand or both.
 - Touch: put a hand on a knee or a foot (the body bends over if it has to), a chest on someone's back; "Fix overlaps" pulls limbs out of bodies.

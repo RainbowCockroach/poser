@@ -158,6 +158,7 @@ button.is-active {
 .chip {
   border-width: 2px;
   border-radius: 999px;
+  box-shadow: inset 0 0 0 1px var(--border);
 }
 
 .chip.is-active {
@@ -662,5 +663,66 @@ select,
 .part-menu strong {
   padding: 4px 10px;
   font-size: 13px;
+}
+/* #endregion */
+
+/* #region Picture tiles */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  min-height: 0;
+  padding: 3px 3px 5px;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.tile-picture {
+  display: block;
+  aspect-ratio: 1;
+  border-radius: 5px;
+  background: var(--background);
+  overflow: hidden;
+}
+
+.tile-picture img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  -webkit-user-drag: none;
+}
+
+.tile.is-active {
+  background: var(--accent-soft);
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.tile-with-remove {
+  position: relative;
+  display: grid;
+}
+
+.tile-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-height: 0;
+  padding: 1px 6px;
+  font-size: 11px;
+}
+
+.tile-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* #endregion */

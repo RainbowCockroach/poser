@@ -94,7 +94,9 @@ no wheel or middle button), so extra buttons and keys are only faster ways.
     (drei Html) so they keep a finger-sized target; pinned limbs are re-solved every drag frame (`holdPins`). The
     two-finger and both-buttons twists from the proposal were left out: two fingers already slide the camera, and
     the ring does the same with one button.
-13. Pictures: thumbnails for poses, hand shapes, lenses and light presets.
+13. ✅ Pictures: thumbnails for poses (presets and My poses), hand shapes, lenses and light presets, drawn on the
+    selected character's own body by the CLI ray tracer in a web worker (`src/app/thumbnails.worker.ts`), one at a time
+    and cached; `src/cli/png.ts` holds the Node-only PNG encoding so `render.ts` runs in the browser too.
 14. Touch by dragging a hand onto a body part; a first-run guide on the stage; pencil poses while fingers move the
     camera (optional).
 

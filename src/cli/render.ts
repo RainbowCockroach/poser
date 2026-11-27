@@ -4,11 +4,11 @@
  * lit by the scene lights with hard shadows on a floor in the background color.
  * Light math follows three.js (Lambert part of MeshStandardMaterial, ACES tone mapping), so a render
  * looks close to the app's "Save PNG", minus soft shadow edges and shine.
+ * Runs in Node and in the browser (the app draws its pose and preset thumbnails with it); png.ts encodes the file.
  * Run: node src/cli/poser.ts render <file.scene.json>
  */
 
 // #region Setup
-import { deflateSync } from 'node:zlib';
 import { Color, Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
 import { forwardKinematics, solvePose, type Pose } from '../core/pose.ts';
 import type { SceneLight } from '../core/lights.ts';
@@ -82,11 +82,6 @@ const FIELD_OF_VIEW_DEGREES = 40;
 const SHADOW_OPACITY = 0.18;
 const SURFACE_EPSILON = 0.0002;
 const MAX_MARCH_STEPS = 80;
-const CRC_TABLE = Array.from({ length: 256 }, (_, index) => {
-  let value = index;
-  for (let bit = 0; bit < 8; bit++) value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
-  return value >>> 0;
-});
 // #endregion
 
 // #region Main flow
@@ -213,26 +208,6 @@ export function renderScene(scene: RenderScene, options: RenderOptions): { width
   return { width: options.width, height: options.height, rgba };
 }
 
-export function encodePng(width: number, height: number, rgba: Uint8Array): Buffer {
-  const rows = Buffer.alloc((width * 4 + 1) * height);
-  for (let row = 0; row < height; row++) {
-    rows[row * (width * 4 + 1)] = 0;
-    Buffer.from(rgba.buffer, rgba.byteOffset + row * width * 4, width * 4).copy(rows, row * (width * 4 + 1) + 1);
-  }
-  const chunk = (type: string, data: Buffer) => {
-    const length = Buffer.alloc(4);
-    length.writeUInt32BE(data.length);
-    const typeAndData = Buffer.concat([Buffer.from(type, 'ascii'), data]);
-    const checksum = Buffer.alloc(4);
-    checksum.writeUInt32BE(crc32(typeAndData));
-    return Buffer.concat([length, typeAndData, checksum]);
-  };
-  const header = Buffer.alloc(13);
-  header.writeUInt32BE(width, 0);
-  header.writeUInt32BE(height, 4);
-  header.set([8, 6, 0, 0, 0], 8);
-  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', header), chunk('IDAT', deflateSync(rows)), chunk('IEND', Buffer.alloc(0))]);
-}
 // #endregion
 
 // #region Helpers
@@ -504,12 +479,5 @@ function srgbToLinear(value: number): number {
 function toSrgbByte(linear: number): number {
   const value = linear <= 0.0031308 ? linear * 12.92 : 1.055 * Math.pow(linear, 1 / 2.4) - 0.055;
   return Math.round(Math.min(1, Math.max(0, value)) * 255);
-}
-
-
-function crc32(data: Buffer): number {
-  let crc = 0xffffffff;
-  for (const byte of data) crc = CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
-  return (crc ^ 0xffffffff) >>> 0;
 }
 // #endregion

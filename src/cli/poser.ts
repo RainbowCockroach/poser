@@ -20,7 +20,8 @@ import { MAX_SHARE_LINK_LENGTH } from '../core/share.ts';
 import { applyHandShape, HAND_SHAPES, type HandSide } from '../core/hands.ts';
 import { normalizeView, type CameraView } from '../core/camera.ts';
 import { newProp, normalizeProp, PROP_KINDS, propBoxes, type PropKind, type SceneProp } from '../core/props.ts';
-import { encodePng, renderScene, VIEWS, type View } from './render.ts';
+import { renderScene, VIEWS, type View } from './render.ts';
+import { encodePng } from './png.ts';
 // #endregion
 
 // #region Types and config

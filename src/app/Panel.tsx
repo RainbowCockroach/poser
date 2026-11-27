@@ -15,10 +15,11 @@ import { MAX_SHARE_LINK_LENGTH, packForLink, readShareHash, shareLink, unpackFro
 import { applyHandShape, HAND_SHAPES, type HandSide } from '../core/hands';
 import { BODY_PARTS, findOverlaps, separate, touch, type PosedCharacter, type TouchSide } from '../core/body';
 import { buildRig, DEFAULT_PROFILE, normalizeProfile, type CharacterProfile } from '../core/rig';
-import { DEFAULT_LIGHTS, LIGHT_PRESETS, MAX_INTENSITY, newLight, normalizeLight, placementOf, positionFromPlacement, type LightKind, type LightPlacement } from '../core/lights';
+import { DEFAULT_LIGHTS, LIGHT_PRESETS, MAX_INTENSITY, newLight, normalizeLight, placementOf, positionFromPlacement, type LightKind, type LightPlacement, type SceneLight } from '../core/lights';
 import { newProp, normalizeProp, PROP_KINDS, propBoxes, MAX_PROP_SIZE, MIN_PROP_SIZE, type PropKind } from '../core/props';
 import type { PropEntry } from './Props';
 import { motionWords, partName } from './labels';
+import { THUMBNAIL_PIXELS, Tile, type ThumbnailRequest } from './Thumbnail';
 import { LENS_PRESETS, MAX_LENS_MM, MIN_LENS_MM, normalizeView, type CameraView } from '../core/camera';
 import { DEFAULT_BACKGROUND, newCharacterId, newLightId, newPropId, type ExportRequest, type LightEntry, type SceneCharacter, type SceneFile, type SceneState } from './App';
 // #endregion
@@ -46,6 +47,9 @@ const PRESET_POSES = (Object.values(import.meta.glob('../../poses/*.pose.json', 
   a.name.localeCompare(b.name),
 );
 const MY_POSES_STORAGE_KEY = 'poser.myPoses';
+const THUMBNAIL_BACKGROUND = '#eef0f5';
+// The right arm raised toward the camera, so a hand shape reads in a small picture.
+const HAND_PICTURE_JOINTS: Pose['joints'] = { shoulder_r: { flexion: 80 }, elbow_r: { flexion: 70 } };
 const SHOW_MORE_STORAGE_KEY = 'poser.showMore';
 const MESSAGE_MILLISECONDS = 5000;
 const PROPORTION_SLIDERS: { key: keyof CharacterProfile['proportions']; label: string; min: number; max: number; step: number }[] = [
@@ -496,11 +500,9 @@ function PoseCard(props: PoseCardProps) {
           {isHandPart && side && (
             <>
               <h3>Hand shape</h3>
-              <div className="row">
+              <div className="tiles">
                 {Object.entries(HAND_SHAPES).map(([name, shape]) => (
-                  <button key={name} onClick={() => setPose(applyHandShape(pose, side, name))}>
-                    {shape.label}
-                  </button>
+                  <Tile key={name} label={shape.label} request={handPicture(profile, name)} onClick={() => setPose(applyHandShape(pose, side, name))} />
                 ))}
               </div>
             </>
@@ -552,12 +554,10 @@ function PoseCard(props: PoseCardProps) {
               {props.isPinFeet ? 'Feet pinned' : 'Pin feet'}
             </button>
           </div>
-          <h3>Hands</h3>
-          <div className="row">
+          <h3>Both hands</h3>
+          <div className="tiles">
             {Object.entries(HAND_SHAPES).map(([name, shape]) => (
-              <button key={name} onClick={() => setPose(applyHandShape(pose, 'both', name))}>
-                {shape.label}
-              </button>
+              <Tile key={name} label={shape.label} request={handPicture(profile, name)} onClick={() => setPose(applyHandShape(pose, 'both', name))} />
             ))}
           </div>
           <TouchEditor key={selected.id} characters={props.characters} selected={selected} onUpdateCharacter={onUpdateCharacter} />
@@ -629,21 +629,19 @@ function LibraryCard({ selected, onUpdateCharacter, myPoses, onApplyPose, onSave
   return (
     <>
       <p className="hint">Tap a pose to put {profile.name} in it. It keeps its place and the way it faces.</p>
-      <div className="row">
+      <div className="tiles">
         {PRESET_POSES.map((file) => (
-          <button key={file.name} onClick={() => onApplyPose(file)}>
-            {file.name}
-          </button>
+          <Tile key={file.name} label={file.name} request={posePicture(profile, file.joints)} onClick={() => onApplyPose(file)} />
         ))}
       </div>
 
       <h3>My poses</h3>
       {myPoses.length === 0 && <p className="hint">None yet. Pose a character, name it below and save it.</p>}
-      <div className="row">
+      <div className="tiles">
         {myPoses.map((file) => (
-          <span key={file.name} className="pose-chip">
-            <button onClick={() => onApplyPose(file)}>{file.name}</button>
-            <button className="danger" title={`Forget ${file.name}`} onClick={() => onSaveMyPoses(myPoses.filter((entry) => entry.name !== file.name))}>
+          <span key={file.name} className="tile-with-remove">
+            <Tile label={file.name} request={posePicture(profile, file.joints)} onClick={() => onApplyPose(file)} />
+            <button className="tile-remove danger" title={`Forget ${file.name}`} aria-label={`Forget ${file.name}`} onClick={() => onSaveMyPoses(myPoses.filter((entry) => entry.name !== file.name))}>
               ✕
             </button>
           </span>
@@ -676,11 +674,9 @@ function LibraryCard({ selected, onUpdateCharacter, myPoses, onApplyPose, onSave
           ))}
         </select>
       </div>
-      <div className="row">
+      <div className="tiles">
         {Object.entries(HAND_SHAPES).map(([name, shape]) => (
-          <button key={name} onClick={() => onUpdateCharacter(selected.id, { pose: applyHandShape(pose, handSide, name) })}>
-            {shape.label}
-          </button>
+          <Tile key={name} label={shape.label} request={handPicture(profile, name)} onClick={() => onUpdateCharacter(selected.id, { pose: applyHandShape(pose, handSide, name) })} />
         ))}
       </div>
     </>
@@ -951,7 +947,7 @@ function PropsEditor({ sceneProps, selected, selectedPropId, onSelectProp, onCha
   );
 }
 
-function CameraEditor({ views, lensMm, onChangeLens, getCameraView, onGoToView, onChangeViews, onLookFrom, onFrameAll, isFrontView, onToggleFrontView, selected }: PanelProps) {
+function CameraEditor({ views, lensMm, onChangeLens, getCameraView, onGoToView, onChangeViews, onLookFrom, onFrameAll, isFrontView, onToggleFrontView, selected, lights, background }: PanelProps) {
   return (
     <>
       <p className="hint">{selected ? `Look at ${selected.profile.name} from:` : 'Look from:'}</p>
@@ -972,11 +968,15 @@ function CameraEditor({ views, lensMm, onChangeLens, getCameraView, onGoToView, 
       </div>
       <h3>Lens</h3>
       <p className="hint">Lens in mm. Wide lenses stretch depth (a hand toward the camera looks huge); long ones flatten it. The characters keep their size on screen.</p>
-      <div className="row">
+      <div className="tiles">
         {LENS_PRESETS.map((preset) => (
-          <button key={preset.lensMm} className={Math.round(lensMm) === preset.lensMm ? 'is-active' : ''} onClick={() => onChangeLens(preset.lensMm)}>
-            {preset.label}
-          </button>
+          <Tile
+            key={preset.lensMm}
+            label={preset.label}
+            isActive={Math.round(lensMm) === preset.lensMm}
+            request={selected ? { ...scenePicture(selected, lights, background), lensMm: preset.lensMm, view: 'front', focus: 'portrait' } : null}
+            onClick={() => onChangeLens(preset.lensMm)}
+          />
         ))}
       </div>
       <Slider label="Lens" unit=" mm" min={MIN_LENS_MM} max={MAX_LENS_MM} step={1} value={Math.round(lensMm)} onChange={onChangeLens} />
@@ -1012,7 +1012,7 @@ function CameraEditor({ views, lensMm, onChangeLens, getCameraView, onGoToView, 
   );
 }
 
-function LightsEditor({ lights, background, selectedLightId, onSelectLight, onChangeLights, onChangeBackground }: PanelProps) {
+function LightsEditor({ lights, background, selected, selectedLightId, onSelectLight, onChangeLights, onChangeBackground }: PanelProps) {
   const selectedLight = lights.find((light) => light.id === selectedLightId) ?? null;
   const updateLight = (change: Partial<LightEntry>) => {
     if (!selectedLight) return;
@@ -1025,18 +1025,18 @@ function LightsEditor({ lights, background, selectedLightId, onSelectLight, onCh
   return (
     <section className="card-section">
       <h3>Lights</h3>
-      <p className="hint">Presets replace all lights:</p>
-      <div className="row">
+      <p className="hint">A preset replaces all lights:</p>
+      <div className="tiles">
         {LIGHT_PRESETS.map((preset) => (
-          <button
+          <Tile
             key={preset.name}
+            label={preset.name}
+            request={selected ? scenePicture(selected, preset.lights, background) : null}
             onClick={() => {
               onChangeLights(() => preset.lights.map((light) => ({ ...light, id: newLightId() })), 'lights:preset');
               onSelectLight(null);
             }}
-          >
-            {preset.name}
-          </button>
+          />
         ))}
       </div>
 
@@ -1165,6 +1165,21 @@ function ImageExport({ onExport }: { onExport: (request: ExportRequest) => void 
 // #endregion
 
 // #region Helpers
+function posePicture(profile: CharacterProfile, joints: Pose['joints']): ThumbnailRequest {
+  return { profile, pose: { joints }, lights: DEFAULT_LIGHTS, background: THUMBNAIL_BACKGROUND, view: 'three-quarter', size: THUMBNAIL_PIXELS };
+}
+
+function handPicture(profile: CharacterProfile, shapeName: string): ThumbnailRequest {
+  return { ...posePicture(profile, applyHandShape({ joints: HAND_PICTURE_JOINTS }, 'r', shapeName).joints), focus: 'hand_r' };
+}
+
+// The character as posed now, without its heading, under these lights.
+function scenePicture(character: SceneCharacter, lights: SceneLight[], background: string): ThumbnailRequest {
+  const { pelvis, ...joints } = character.pose.joints ?? {};
+  const { turn: _heading, ...pelvisTilt } = pelvis ?? {};
+  return { ...posePicture(character.profile, { ...joints, pelvis: pelvisTilt }), lights, background };
+}
+
 interface SliderProps {
   label: string;
   ends?: [string, string];
