@@ -8,7 +8,7 @@
 import { useMemo } from 'react';
 import { Line } from '@react-three/drei';
 import { Object3D, Vector3 } from 'three';
-import type { LightEntry } from './App';
+import { SHADOW_TYPE, type LightEntry } from './App';
 // #endregion
 
 // #region Config
@@ -97,7 +97,7 @@ function Light({ light }: { light: LightEntry }) {
       color={light.color}
       intensity={light.intensity * distance * distance}
       decay={2}
-      castShadow={light.castShadow}
+      castShadow={light.castShadow && SHADOW_TYPE !== 'variance'}
       shadow-mapSize={[1024, 1024]}
       shadow-bias={SHADOW_BIAS}
       shadow-normalBias={SHADOW_NORMAL_BIAS}

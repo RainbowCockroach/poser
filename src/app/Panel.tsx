@@ -10,6 +10,7 @@
 import { useState, type ChangeEvent } from 'react';
 import { CONTROLS, mirrorPose, type Pose, type PoseFile } from '../core/pose';
 import { dropToFloor } from '../core/reach';
+import { BODY_PARTS, findOverlaps, separate, touch, type PosedCharacter, type TouchSide } from '../core/body';
 import { buildRig, DEFAULT_PROFILE, normalizeProfile, type CharacterProfile } from '../core/rig';
 import { DEFAULT_LIGHTS, LIGHT_PRESETS, MAX_INTENSITY, newLight, normalizeLight, placementOf, positionFromPlacement, type LightKind, type LightPlacement } from '../core/lights';
 import { DEFAULT_BACKGROUND, newCharacterId, newLightId, type ExportRequest, type LightEntry, type SceneCharacter, type SceneFile, type SceneState } from './App';
@@ -31,6 +32,8 @@ const PROPORTION_SLIDERS: { key: keyof CharacterProfile['proportions']; label: s
   { key: 'shoulderWidth', label: 'Shoulder width', min: 0.6, max: 1.8, step: 0.05 },
   { key: 'hipWidth', label: 'Hip width', min: 0.6, max: 1.8, step: 0.05 },
 ];
+
+const TOUCH_SIDES: TouchSide[] = ['nearest', 'front', 'back', 'left', 'right'];
 
 const LIGHT_KINDS: { kind: LightKind; label: string }[] = [
   { kind: 'sun', label: 'Sun' },
@@ -212,7 +215,8 @@ interface CharacterEditorProps extends PanelProps {
   onSaveMyPoses: (poses: PoseFile[]) => void;
 }
 
-function CharacterEditor({ selected, selectedControl, onSelectControl, onUpdateCharacter, onRemoveCharacter, myPoses, onApplyPose, onSaveMyPoses }: CharacterEditorProps) {
+function CharacterEditor(props: CharacterEditorProps) {
+  const { selected, selectedControl, onSelectControl, onUpdateCharacter, onRemoveCharacter, myPoses, onApplyPose, onSaveMyPoses } = props;
   const { profile, pose } = selected;
   const [poseName, setPoseName] = useState('');
   const position = pose.position ?? [0, 0, 0];
@@ -307,6 +311,8 @@ function CharacterEditor({ selected, selectedControl, onSelectControl, onUpdateC
           </button>
         </div>
       </details>
+
+      <TouchEditor key={selected.id} characters={props.characters} selected={selected} onUpdateCharacter={onUpdateCharacter} />
 
       <details>
         <summary>Pose library</summary>
@@ -415,6 +421,97 @@ function CharacterEditor({ selected, selectedControl, onSelectControl, onUpdateC
         )}
       </details>
     </>
+  );
+}
+
+// Touching and overlaps run the solver in core/body.ts; overlaps are only checked while this section is open.
+function TouchEditor({ characters, selected, onUpdateCharacter }: { characters: SceneCharacter[]; selected: SceneCharacter; onUpdateCharacter: PanelProps['onUpdateCharacter'] }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [part, setPart] = useState('hand_r');
+  const [targetId, setTargetId] = useState(selected.id);
+  const [targetPart, setTargetPart] = useState('knee_l');
+  const [side, setSide] = useState<TouchSide>('nearest');
+  const [result, setResult] = useState('');
+  const posed: PosedCharacter[] = characters.map((character) => ({ name: character.profile.name, rig: buildRig(character.profile), pose: character.pose }));
+  const index = characters.findIndex((character) => character.id === selected.id);
+  const targetIndex = Math.max(0, characters.findIndex((character) => character.id === targetId));
+  const overlaps = isOpen ? findOverlaps(posed).filter((overlap) => overlap.character === index || overlap.otherCharacter === index) : [];
+  const partLabel = (name: string) => BODY_PARTS[name]?.label.toLowerCase() ?? name.replace(/_/g, ' ');
+
+  const touchNow = () => {
+    try {
+      const touched = touch(posed, index, part, targetIndex, targetPart, side);
+      onUpdateCharacter(selected.id, { pose: touched.pose });
+      const gap = Math.round(Math.abs(touched.gapMeters) * 100);
+      if (gap < 1) setResult('Touching.');
+      else if (touched.gapMeters < 0) setResult(`Ended ${gap} cm inside; the joints can't pull back further. Try another side.`);
+      else setResult(`Got within ${gap} cm; the joints can't reach further. Move the character closer and try again.`);
+    } catch (error) {
+      setResult((error as Error).message);
+    }
+  };
+
+  return (
+    <details onToggle={(event) => setIsOpen(event.currentTarget.open)}>
+      <summary>Touch</summary>
+      <label className="field">
+        Put the
+        <select value={part} onChange={(event) => setPart(event.target.value)}>
+          {Object.entries(BODY_PARTS).map(([name, bodyPart]) => (
+            <option key={name} value={name}>
+              {bodyPart.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        on
+        <select value={characters[targetIndex]?.id ?? selected.id} onChange={(event) => setTargetId(event.target.value)}>
+          {characters.map((character) => (
+            <option key={character.id} value={character.id}>
+              {character.id === selected.id ? `${character.profile.name} (itself)` : character.profile.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="row">
+        <select value={targetPart} onChange={(event) => setTargetPart(event.target.value)} aria-label="Body part to touch">
+          {Object.entries(BODY_PARTS).map(([name, bodyPart]) => (
+            <option key={name} value={name}>
+              {bodyPart.label}
+            </option>
+          ))}
+        </select>
+        <select value={side} onChange={(event) => setSide(event.target.value as TouchSide)} aria-label="Side">
+          {TOUCH_SIDES.map((name) => (
+            <option key={name} value={name}>
+              {name === 'nearest' ? 'nearest side' : `${name} side`}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="row">
+        <button onClick={touchNow}>Touch</button>
+      </div>
+      {result && <p className="hint">{result}</p>}
+
+      <p className="hint">
+        {overlaps.length === 0
+          ? 'No body parts sink into each other.'
+          : overlaps
+              .slice(0, 4)
+              .map((overlap) => {
+                const owner = (characterIndex: number) => (characterIndex === index ? '' : `${characters[characterIndex].profile.name}'s `);
+                return `${owner(overlap.character)}${partLabel(overlap.part)} is ${Math.max(1, Math.round(overlap.depthMeters * 100))} cm inside ${owner(overlap.otherCharacter)}${partLabel(overlap.otherPart)}`;
+              })
+              .join('; ')}
+      </p>
+      <div className="row">
+        <button disabled={overlaps.length === 0} onClick={() => onUpdateCharacter(selected.id, { pose: separate(posed, index) })} title="Bend the limbs of this character out of bodies they sink into">
+          Fix overlaps
+        </button>
+      </div>
+    </details>
   );
 }
 

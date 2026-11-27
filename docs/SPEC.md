@@ -15,6 +15,7 @@ GitHub Pages. Used by one person and friends; no accounts, no server.
 | Sharing | JSON files: `*.oc.json` (character), `*.scene.json` (scene), `*.pose.json` (pose) | Send on Discord etc.; no server needed |
 | AI agents | Same core library as the app, used from a CLI and a local MCP server | Claude Code on the user's computer only |
 | Output | PNG render (Blender/glTF export later, optional) | |
+| Agent render | CPU ray tracer over the mannequin shapes (`src/cli/render.ts`) | No headless browser or GPU to install |
 
 ## Body model
 
@@ -52,7 +53,10 @@ values, see sources). Coupled motion:
 3. ✅ Lights: sun/spot/lamp/ambient with color, brightness, shadows, placed by angle around the target; 6 presets;
    saved in the scene file and undoable. PNG export of the current view (up to 4096 px, optional transparent
    background, helpers hidden). GitHub Pages deploy from `main`.
-4. Contact solver (hand on knee, chest on back) + body collision; CLI (`poser render`) and MCP server for agents.
+4. ✅ Contact: `touch` puts one body part on another (own body or another character; limbs bend, torsos slide),
+   overlap check against the rest pose, "Fix overlaps". CLI (`node src/cli/poser.ts`: render, touch, check,
+   separate, pose, drop) and the same commands as a stdio MCP server; `render` is a small CPU ray tracer, so it
+   needs no browser or GPU. Draws on demand (phones stay cool); variance shadows on Safari/iOS.
 5. Share links (character compressed into the URL), mobile polish.
 
 ## Sources

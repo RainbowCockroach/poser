@@ -195,6 +195,12 @@ select,
   color: var(--text);
 }
 
+.row select {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+
 .field {
   display: grid;
   gap: 4px;
@@ -258,8 +264,10 @@ select,
 /* #endregion */
 
 /* #region Stage overlays */
+/* Above the canvas and the 3D labels; Android WebView doesn't paint unstacked overlays above WebGL. */
 .stage-tools {
   position: absolute;
+  z-index: 2;
   top: 12px;
   left: 12px;
   right: 12px;

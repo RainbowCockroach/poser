@@ -6,9 +6,9 @@
 // #region Setup
 import { describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
-import { buildRig, type CharacterProfile } from './rig';
-import { CONTROLS, forwardKinematics, mirrorPose, solvePose, type Pose } from './pose';
-import { dragMotions, dropToFloor, legMotions, reach } from './reach';
+import { buildRig, type CharacterProfile } from './rig.ts';
+import { CONTROLS, forwardKinematics, mirrorPose, solvePose, type Pose } from './pose.ts';
+import { dragMotions, dropToFloor, legMotions, reach } from './reach.ts';
 import potat from '../../characters/potat.oc.json';
 import bush from '../../characters/bush.oc.json';
 // #endregion

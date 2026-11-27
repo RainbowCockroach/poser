@@ -11,8 +11,8 @@
 
 // #region Setup
 import { Vector3 } from 'three';
-import { CONTROL_FOR_BONE, CONTROLS, forwardKinematics, solvePose, type Pose } from './pose';
-import type { Rig, Shape, Vec3 } from './rig';
+import { CONTROL_FOR_BONE, CONTROLS, forwardKinematics, solvePose, type Pose } from './pose.ts';
+import type { Rig, Shape, Vec3 } from './rig.ts';
 // #endregion
 
 // #region Types

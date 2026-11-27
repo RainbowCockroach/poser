@@ -63,6 +63,9 @@ const UNDO_STEPS = 100;
 const SAME_GESTURE_MILLISECONDS = 800;
 // Big renders can fail on phones; the long side of a PNG stays under this.
 const MAX_EXPORT_PIXELS = 4096;
+// Safari and every iPhone/iPad browser (WebKit) put the whole scene in shadow with PCF shadow maps; variance shadow maps work there.
+// three.js can't do variance shadows for lamps (point lights), so lamps cast no shadow on those browsers.
+export const SHADOW_TYPE = /AppleWebKit/.test(navigator.userAgent) && !/Chrome|Android/.test(navigator.userAgent) ? 'variance' : 'percentage';
 // #endregion
 
 // #region Main flow
@@ -145,7 +148,8 @@ export function App() {
   return (
     <div className="app">
       <div className="stage">
-        <Canvas shadows dpr={[1, 2]} onPointerMissed={() => setSelectedControl(null)}>
+        {/* Draws only when something changes, so phones stay cool. */}
+        <Canvas shadows={SHADOW_TYPE} frameloop="demand" dpr={[1, 2]} onPointerMissed={() => setSelectedControl(null)}>
           <Stage
             characters={characters}
             lights={lights}
@@ -238,9 +242,13 @@ function Stage(props: StageProps) {
   const renderer = useThree((state) => state.gl);
   const threeScene = useThree((state) => state.scene);
   const camera = useThree((state) => state.camera);
+  const invalidate = useThree((state) => state.invalidate);
   const startDrag = useDragPosing(isPinFeet, onPose);
   const isExporting = exportRequest !== null;
   const isShowingGuides = !isExporting || exportRequest.isShowingGuides;
+
+  // Mannequin and light targets move their three.js objects directly, which "demand" drawing doesn't notice.
+  useEffect(() => invalidate());
 
   // Runs after React has hidden the helpers, renders one sharper frame by hand and saves it.
   useEffect(() => {

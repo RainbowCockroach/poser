@@ -12,7 +12,7 @@
 
 // #region Setup
 import { Euler, Quaternion, Vector3 } from 'three';
-import type { Rig, Vec3 } from './rig';
+import type { Rig, Vec3 } from './rig.ts';
 // #endregion
 
 // #region Types

@@ -8,7 +8,7 @@
 
 // #region Setup
 import { Color } from 'three';
-import type { Vec3 } from './rig';
+import type { Vec3 } from './rig.ts';
 // #endregion
 
 // #region Types and config

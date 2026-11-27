@@ -1,7 +1,35 @@
 # Working with Poser as an AI agent
 
-Poser scenes and characters are plain JSON. Edit them, then open them in the app (`npm run dev`, "Open file").
-A CLI renderer and MCP server are planned (see `docs/SPEC.md`); until then, check results in the app.
+Poser scenes and characters are plain JSON. Edit them by hand, or with the `poser` CLI / MCP server below,
+then look at the result with `render` (or open the file in the app: `npm run dev`, "Open file").
+
+## CLI and MCP server
+
+Needs Node 22.18+ (it runs the TypeScript directly). `scenes/sample.scene.json` is a scene to start from.
+
+```sh
+node src/cli/poser.ts help                                     # every command and argument
+node src/cli/poser.ts render scenes/sample.scene.json --view front --out front.png
+node src/cli/poser.ts pose   scenes/sample.scene.json Bush "Sit on a chair"
+node src/cli/poser.ts touch  scenes/sample.scene.json Potat hand_r head --target Bush
+node src/cli/poser.ts check  scenes/sample.scene.json          # body parts sinking into each other
+node src/cli/poser.ts separate scenes/sample.scene.json Potat  # push them back out
+```
+
+Commands that change a scene overwrite the file unless `--out` is given. Characters are named by
+`profile.name` or by their number in the scene (first is 0). `render` views: `front`, `three-quarter`,
+`side` (from the character's left), `back`, `top`. The render is a ray-traced stand-in for the app's
+look (same shapes, lights and shadows), about 1–2 s at the default 1200×900.
+
+The same commands are MCP tools (`render` returns the image): `.mcp.json` registers `node src/cli/poser.ts mcp`
+for Claude Code in this repo. A good loop: change the pose, `render`, look, `check`, adjust.
+
+Body parts for `touch` and `check`: `head`, `neck`, `chest`, `belly`, `hips`, and per side (`_l`/`_r`)
+`shoulder`, `upper_arm`, `elbow`, `forearm`, `hand`, `thigh`, `knee`, `shin`, `foot`. `touch` bends the
+limb that owns the part (a torso part slides the whole character over the floor instead) and keeps the
+rest of the limb out of the body; `--side front|back|left|right` picks a side of the target part in its
+own frame (the front of a seated thigh faces up). If a target is out of reach it gets as close as the
+joint limits allow and says how far is left; move the character closer and run it again.
 
 ## Coordinates
 
@@ -86,4 +114,5 @@ with the same meaning (abduction is always "away from the body").
 Tips: flexion and abduction on the same ball joint blend (90 + 90 = horizontal, diagonal). Raising an
 arm lifts the shoulder by itself, so don't add `elevation` for that. A character that sits or kneels
 needs `position[1]` lowered; in the app "Drop to floor" (Place) does it. Code that runs the core library
-can call `dropToFloor(rig, pose)` and `reach(rig, pose, goals, motions)` from `src/core/reach.ts`.
+can call `dropToFloor(rig, pose)` and `reach(rig, pose, goals, motions)` from `src/core/reach.ts`, and
+`touch`, `separate`, `findOverlaps` from `src/core/body.ts`.

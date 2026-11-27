@@ -1,0 +1,67 @@
+{
+  "format": "poser.scene/1",
+  "characters": [
+    {
+      "profile": {
+        "format": "poser.character/1",
+        "name": "Potat",
+        "heightCm": 210,
+        "color": "#d8a86a",
+        "proportions": {
+          "headsTall": 6.4,
+          "neckLength": 1,
+          "torsoLength": 1.05,
+          "legLength": 1.1,
+          "armLength": 1.05,
+          "handSize": 1.1,
+          "footSize": 1.1,
+          "shoulderWidth": 1.35,
+          "hipWidth": 1.1
+        },
+        "build": {
+          "weight": 0.25,
+          "muscle": 0.6,
+          "chest": 0
+        }
+      },
+      "pose": {
+        "position": [
+          -0.5,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "profile": {
+        "format": "poser.character/1",
+        "name": "Bush",
+        "heightCm": 110,
+        "color": "#8fc48a",
+        "proportions": {
+          "headsTall": 3.6,
+          "neckLength": 0.6,
+          "torsoLength": 1,
+          "legLength": 0.85,
+          "armLength": 0.85,
+          "handSize": 0.9,
+          "footSize": 0.9,
+          "shoulderWidth": 0.9,
+          "hipWidth": 1
+        },
+        "build": {
+          "weight": 0.1,
+          "muscle": 0,
+          "chest": 0
+        }
+      },
+      "pose": {
+        "position": [
+          0.5,
+          0,
+          0.2
+        ]
+      }
+    }
+  ]
+}

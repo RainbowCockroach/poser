@@ -5,7 +5,7 @@
 
 // #region Setup
 import { describe, expect, it } from 'vitest';
-import { LIGHT_PRESETS, MAX_INTENSITY, normalizeLight, placementOf, positionFromPlacement, type SceneLight } from './lights';
+import { LIGHT_PRESETS, MAX_INTENSITY, normalizeLight, placementOf, positionFromPlacement, type SceneLight } from './lights.ts';
 // #endregion
 
 // #region Tests

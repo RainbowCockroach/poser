@@ -6,8 +6,8 @@
 // #region Setup
 import { describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
-import { buildRig, type CharacterProfile } from './rig';
-import { forwardKinematics, solvePose, type Pose } from './pose';
+import { buildRig, type CharacterProfile } from './rig.ts';
+import { forwardKinematics, solvePose, type Pose } from './pose.ts';
 import potat from '../../characters/potat.oc.json';
 import seana from '../../characters/seana.oc.json';
 import notMad from '../../characters/not-mad.oc.json';
