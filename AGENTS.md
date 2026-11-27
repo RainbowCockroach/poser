@@ -14,6 +14,7 @@ node src/cli/poser.ts pose   scenes/sample.scene.json Bush "Sit on a chair"
 node src/cli/poser.ts touch  scenes/sample.scene.json Potat hand_r head --target Bush
 node src/cli/poser.ts check  scenes/sample.scene.json          # body parts sinking into each other
 node src/cli/poser.ts separate scenes/sample.scene.json Potat  # push them back out
+node src/cli/poser.ts link   scenes/sample.scene.json          # a link that opens the scene in the app
 ```
 
 Commands that change a scene overwrite the file unless `--out` is given. Characters are named by

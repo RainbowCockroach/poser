@@ -14,6 +14,8 @@ npm run poser -- help   # CLI for agents: render, touch, check, pose (see AGENTS
 
 - Characters: `characters/*.oc.json` load at startup. Share them, or open one with "Open file".
 - Scenes: "Save scene" writes a `.scene.json` that includes its characters.
+- Share link: one link opens the whole scene (or one character, from Body) on a friend's phone or computer.
+  Everything is inside the link after `#`, so nothing is uploaded.
 - Posing: drag a body part to bend it; drag a hand or foot to move the whole limb; drag the hips to move
   the character ("Pin feet" keeps the feet planted). Undo with Ctrl/Cmd+Z.
 - Poses: presets in `poses/*.pose.json`, plus "My poses" saved in the browser and shareable as `.pose.json`.

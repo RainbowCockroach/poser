@@ -7,9 +7,10 @@
  */
 
 // #region Setup
-import { useState, type ChangeEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { CONTROLS, mirrorPose, type Pose, type PoseFile } from '../core/pose';
 import { dropToFloor } from '../core/reach';
+import { MAX_SHARE_LINK_LENGTH, packForLink, readShareHash, shareLink, unpackFromLink, type SharedKind } from '../core/share';
 import { BODY_PARTS, findOverlaps, separate, touch, type PosedCharacter, type TouchSide } from '../core/body';
 import { buildRig, DEFAULT_PROFILE, normalizeProfile, type CharacterProfile } from '../core/rig';
 import { DEFAULT_LIGHTS, LIGHT_PRESETS, MAX_INTENSITY, newLight, normalizeLight, placementOf, positionFromPlacement, type LightKind, type LightPlacement } from '../core/lights';
@@ -73,6 +74,7 @@ export function Panel(props: PanelProps) {
   const { characters, selected, selectedControl } = props;
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [message, setMessage] = useState('');
+  const [sharedLink, setSharedLink] = useState('');
   const [myPoses, setMyPoses] = useState<PoseFile[]>(() => {
     try {
       const stored = JSON.parse(localStorage.getItem(MY_POSES_STORAGE_KEY) ?? '[]');
@@ -102,51 +104,114 @@ export function Panel(props: PanelProps) {
     setMessage(`${selected.profile.name}: ${file.name}`);
   };
 
+  // Opened files and share links both end up here, so a link behaves exactly like opening the file.
+  const openData = (data: { format?: string; name?: string }) => {
+    if (data.format === 'poser.scene/1') {
+      const scene = data as SceneFile;
+      props.onReplaceScene({
+        characters: scene.characters.map((entry) => ({ id: newCharacterId(), profile: normalizeProfile(entry.profile), pose: entry.pose ?? {} })),
+        // Scenes saved before lights existed get the default lights.
+        lights: (Array.isArray(scene.lights) ? scene.lights.filter((light) => typeof light === 'object' && light).map(normalizeLight) : DEFAULT_LIGHTS).map((light) => ({ ...light, id: newLightId() })),
+        background: /^#[0-9a-f]{6}$/i.test(scene.background ?? '') ? scene.background! : DEFAULT_BACKGROUND,
+      });
+      setMessage(`Opened scene with ${scene.characters.length} characters`);
+      return;
+    }
+    if (data.format === 'poser.character/1') {
+      props.onAddCharacter(data as CharacterProfile);
+      setMessage(`Added ${data.name}`);
+      return;
+    }
+    if (data.format === 'poser.pose/1') {
+      const pose = data as PoseFile;
+      saveMyPoses([...myPoses.filter((entry) => entry.name !== pose.name), pose]);
+      if (!selected) {
+        setMessage(`Added pose ${pose.name} to My poses`);
+        return;
+      }
+      applyPose(pose);
+      return;
+    }
+    setMessage('That file is not a Poser scene, character or pose');
+  };
+
   const openFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
     try {
-      const data = JSON.parse(await file.text());
-      if (data.format === 'poser.scene/1') {
-        const scene = data as SceneFile;
-        props.onReplaceScene({
-          characters: scene.characters.map((entry) => ({ id: newCharacterId(), profile: normalizeProfile(entry.profile), pose: entry.pose ?? {} })),
-          // Scenes saved before lights existed get the default lights.
-          lights: (Array.isArray(scene.lights) ? scene.lights.filter((light) => typeof light === 'object' && light).map(normalizeLight) : DEFAULT_LIGHTS).map((light) => ({ ...light, id: newLightId() })),
-          background: /^#[0-9a-f]{6}$/i.test(scene.background ?? '') ? scene.background! : DEFAULT_BACKGROUND,
-        });
-        setMessage(`Opened scene with ${scene.characters.length} characters`);
-        return;
-      }
-      if (data.format === 'poser.character/1') {
-        props.onAddCharacter(data as CharacterProfile);
-        setMessage(`Added ${data.name}`);
-        return;
-      }
-      if (data.format === 'poser.pose/1') {
-        const pose = data as PoseFile;
-        saveMyPoses([...myPoses.filter((entry) => entry.name !== pose.name), pose]);
-        if (!selected) {
-          setMessage(`Added pose ${pose.name} to My poses`);
-          return;
-        }
-        applyPose(pose);
-        return;
-      }
-      setMessage('That file is not a Poser scene, character or pose');
+      openData(JSON.parse(await file.text()));
     } catch (error) {
       setMessage(`Could not read ${file.name}: ${(error as Error).message}`);
     }
   };
 
-  const saveScene = () => {
-    const scene: SceneFile = {
-      format: 'poser.scene/1',
-      characters: characters.map(({ profile, pose }) => ({ profile, pose })),
-      lights: props.lights.map(({ id: _id, ...light }) => light),
-      background: props.background,
+  const latestOpenData = useRef(openData);
+  latestOpenData.current = openData;
+
+  // A share link (#scene=… or #character=…) opens once, then leaves the address bar so a reload doesn't add it again.
+  useEffect(() => {
+    const openSharedLink = async () => {
+      const shared = readShareHash(location.hash);
+      if (!shared) return;
+      history.replaceState(null, '', location.pathname + location.search);
+      if (typeof DecompressionStream === 'undefined') {
+        setMessage('This browser is too old to open share links (Safari 16.4 or newer works); ask for the file instead');
+        return;
+      }
+      try {
+        latestOpenData.current((await unpackFromLink(shared.packed)) as { format?: string });
+      } catch {
+        setMessage('That share link is broken or cut off; ask for it again, or for the file');
+      }
     };
+    openSharedLink();
+    window.addEventListener('hashchange', openSharedLink);
+    return () => window.removeEventListener('hashchange', openSharedLink);
+  }, []);
+
+  const share = async (kind: SharedKind, data: object, title: string) => {
+    // On a phone the panel may be folded away; the result has to be seen.
+    setIsCollapsed(false);
+    setSharedLink('');
+    let link: string;
+    try {
+      link = shareLink(location.href, kind, await packForLink(data));
+    } catch {
+      setMessage('This browser is too old to make share links; use "Save scene" and send the file');
+      return;
+    }
+    if (link.length > MAX_SHARE_LINK_LENGTH) {
+      setMessage(`This ${kind} is too big for a link (${link.length} characters); use "Save scene" and send the file`);
+      return;
+    }
+    // Phones get their share sheet (Discord, Messages…); computers get the clipboard.
+    if (navigator.share && matchMedia('(pointer: coarse)').matches) {
+      try {
+        await navigator.share({ title, url: link });
+        setMessage('');
+      } catch (error) {
+        if ((error as Error).name !== 'AbortError') setSharedLink(link);
+      }
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(link);
+      setMessage(`Link to ${title} copied`);
+    } catch {
+      setSharedLink(link);
+    }
+  };
+
+  const sceneFile = (): SceneFile => ({
+    format: 'poser.scene/1',
+    characters: characters.map(({ profile, pose }) => ({ profile, pose })),
+    lights: props.lights.map(({ id: _id, ...light }) => light),
+    background: props.background,
+  });
+
+  const saveScene = () => {
+    const scene = sceneFile();
     const link = document.createElement('a');
     link.href = URL.createObjectURL(new Blob([JSON.stringify(scene, null, 2)], { type: 'application/json' }));
     link.download = 'scene.scene.json';
@@ -164,12 +229,21 @@ export function Panel(props: PanelProps) {
             <input type="file" accept=".json,application/json" onChange={openFile} hidden />
           </label>
           <button onClick={saveScene}>Save scene</button>
+          <button onClick={() => share('scene', sceneFile(), 'this scene')} title="Copy or send a link that opens this scene, characters and poses included">
+            Share
+          </button>
           <button className="collapse-toggle" onClick={() => setIsCollapsed(!isCollapsed)}>
             {isCollapsed ? '▲' : '▼'}
           </button>
         </div>
       </header>
       {message && <p className="message">{message}</p>}
+      {sharedLink && (
+        <label className="field message">
+          Copy this link:
+          <input readOnly value={sharedLink} onFocus={(event) => event.currentTarget.select()} />
+        </label>
+      )}
 
       <div className="panel-body">
         <section>
@@ -198,6 +272,7 @@ export function Panel(props: PanelProps) {
             myPoses={myPoses}
             onApplyPose={applyPose}
             onSaveMyPoses={saveMyPoses}
+            onShareCharacter={() => share('character', selected.profile, selected.profile.name)}
           />
         )}
 
@@ -213,6 +288,7 @@ interface CharacterEditorProps extends PanelProps {
   myPoses: PoseFile[];
   onApplyPose: (file: PoseFile) => void;
   onSaveMyPoses: (poses: PoseFile[]) => void;
+  onShareCharacter: () => void;
 }
 
 function CharacterEditor(props: CharacterEditorProps) {
@@ -393,6 +469,7 @@ function CharacterEditor(props: CharacterEditorProps) {
         ))}
         <div className="row">
           <button onClick={downloadProfile}>Download character</button>
+          <button onClick={props.onShareCharacter}>Share link</button>
           <button className="danger" onClick={() => onRemoveCharacter(selected.id)}>
             Remove
           </button>

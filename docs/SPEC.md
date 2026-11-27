@@ -12,7 +12,7 @@ GitHub Pages. Used by one person and friends; no accounts, no server.
 | Platform | Web app (React + Three.js via React Three Fiber), static build | One codebase for desktop and mobile; free hosting |
 | Body | Generated in code from a small profile, not a sculpted mesh | One generator covers chibi to tall; agents can edit numbers |
 | Joints | Anatomical names, real range-of-motion limits, coupled motion | Poses stay human; agents can say "elbow flexion 90" |
-| Sharing | JSON files: `*.oc.json` (character), `*.scene.json` (scene), `*.pose.json` (pose) | Send on Discord etc.; no server needed |
+| Sharing | JSON files: `*.oc.json` (character), `*.scene.json` (scene), `*.pose.json` (pose), and share links (`#scene=…`, `#character=…`) | Send on Discord etc.; no server needed |
 | AI agents | Same core library as the app, used from a CLI and a local MCP server | Claude Code on the user's computer only |
 | Output | PNG render (Blender/glTF export later, optional) | |
 | Agent render | CPU ray tracer over the mannequin shapes (`src/cli/render.ts`) | No headless browser or GPU to install |
@@ -57,7 +57,11 @@ values, see sources). Coupled motion:
    overlap check against the rest pose, "Fix overlaps". CLI (`node src/cli/poser.ts`: render, touch, check,
    separate, pose, drop) and the same commands as a stdio MCP server; `render` is a small CPU ray tracer, so it
    needs no browser or GPU. Draws on demand (phones stay cool); variance shadows on Safari/iOS.
-5. Share links (character compressed into the URL), mobile polish.
+5. ✅ Share links: a scene or one character packed into the URL hash (deflate + base64url, never sent to a
+   server); phones open the share sheet, computers copy the link; `poser link` makes one from a file. Mobile
+   polish: bigger invisible grab areas around hands and feet on touch screens, the first view fits every
+   character on a narrow screen, 40 px touch targets, safe-area margins. Checked on an Android phone emulator
+   (WebView) and the iPad and iPhone simulators.
 
 ## Sources
 

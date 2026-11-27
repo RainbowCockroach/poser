@@ -7,7 +7,7 @@
  */
 
 // #region Setup
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { Grid, Html, OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei';
 import { SRGBColorSpace, TextureLoader, Vector2, type Texture } from 'three';
@@ -57,6 +57,7 @@ const SAMPLE_PROFILES = Object.values(
 
 export const DEFAULT_BACKGROUND = '#eef0f5';
 const CHARACTER_SPACING = 0.9;
+const CAMERA_FIELD_OF_VIEW = 40;
 const RULER_HEIGHT_METERS = 2.5;
 const UNDO_STEPS = 100;
 // Changes with the same key closer together than this are one undo step (one slider drag).
@@ -93,6 +94,7 @@ export function App() {
   const [isFrontView, setIsFrontView] = useState(false);
   const [isPinFeet, setIsPinFeet] = useState(false);
   const [exportRequest, setExportRequest] = useState<ExportRequest | null>(null);
+  const [sceneVersion, setSceneVersion] = useState(0);
 
   const changeScene = (update: (state: SceneState) => SceneState, key: string) => {
     const now = performance.now();
@@ -160,6 +162,7 @@ export function App() {
             isFrontView={isFrontView}
             isPinFeet={isPinFeet}
             exportRequest={exportRequest}
+            sceneVersion={sceneVersion}
             onExported={() => setExportRequest(null)}
             onSelect={(id, control) => {
               setSelectedId(id);
@@ -200,6 +203,7 @@ export function App() {
         onUpdateCharacter={updateCharacter}
         onReplaceScene={(next) => {
           changeScene(() => next, 'replace');
+          setSceneVersion((version) => version + 1);
           setSelectedId(next.characters[0]?.id ?? null);
           setSelectedControl(null);
           setSelectedLightId(null);
@@ -231,6 +235,7 @@ interface StageProps {
   isFrontView: boolean;
   isPinFeet: boolean;
   exportRequest: ExportRequest | null;
+  sceneVersion: number;
   onExported: () => void;
   onSelect: (id: string, control: string | null) => void;
   onPose: (id: string, pose: Pose, gestureKey: string) => void;
@@ -239,6 +244,14 @@ interface StageProps {
 function Stage(props: StageProps) {
   const { characters, lights, background, selected, highlightedBones, isFrontView, isPinFeet, exportRequest, onSelect, onPose } = props;
   const viewportHeight = useThree((state) => state.size.height);
+  const viewportWidth = useThree((state) => state.size.width);
+  // Start far enough back that everyone fits, even on a narrow phone held upright. Later the camera is the user's.
+  // Recomputed only when a whole scene is opened (file or share link), so normal editing never moves the camera.
+  const startDistance = useMemo(() => {
+    const halfSpread = Math.max(0, ...characters.map((character) => Math.abs(character.pose.position?.[0] ?? 0))) + 0.6;
+    const horizontalHalfTangent = Math.tan((CAMERA_FIELD_OF_VIEW * Math.PI) / 360) * (viewportWidth / Math.max(1, viewportHeight));
+    return Math.max(5.5, halfSpread / horizontalHalfTangent + 0.5);
+  }, [props.sceneVersion]);
   const renderer = useThree((state) => state.gl);
   const threeScene = useThree((state) => state.scene);
   const camera = useThree((state) => state.camera);
@@ -284,9 +297,9 @@ function Stage(props: StageProps) {
       {isFrontView ? (
         <OrthographicCamera makeDefault position={[focusX, focusHeight / 2, 10]} zoom={viewportHeight / (focusHeight * 1.25)} />
       ) : (
-        <PerspectiveCamera makeDefault position={[0.6, 1.5, 5.5]} fov={40} />
+        <PerspectiveCamera key={props.sceneVersion} makeDefault position={[0.6, 1.5, startDistance]} fov={CAMERA_FIELD_OF_VIEW} />
       )}
-      <OrbitControls key={isFrontView ? `front-${focusX}` : 'free'} target={[isFrontView ? focusX : 0, isFrontView ? focusHeight / 2 : 1, 0]} enableRotate={!isFrontView} makeDefault />
+      <OrbitControls key={isFrontView ? `front-${focusX}` : `free-${props.sceneVersion}`} target={[isFrontView ? focusX : 0, isFrontView ? focusHeight / 2 : 1, 0]} enableRotate={!isFrontView} makeDefault />
 
       <SceneLights lights={lights} selectedLightId={props.selectedLightId} isShowingMarkers={!isExporting} />
 

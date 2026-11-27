@@ -10,11 +10,13 @@
 // #region Setup
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
+import { deflateRawSync } from 'node:zlib';
 import { buildRig, normalizeProfile, type CharacterProfile } from '../core/rig.ts';
 import { dropToFloor } from '../core/reach.ts';
 import type { Pose, PoseFile } from '../core/pose.ts';
 import { DEFAULT_LIGHTS, normalizeLight, type SceneLight } from '../core/lights.ts';
 import { BODY_PARTS, findOverlaps, separate, touch, type PosedCharacter, type TouchSide } from '../core/body.ts';
+import { MAX_SHARE_LINK_LENGTH } from '../core/share.ts';
 import { encodePng, renderScene, VIEWS, type View } from './render.ts';
 // #endregion
 
@@ -41,7 +43,8 @@ interface Command {
   run: (args: Arguments) => CommandResult;
 }
 
-const VERSION = '0.4.0';
+const VERSION = '0.5.0';
+const SITE_URL = 'https://rainbowcockroach.github.io/poser/';
 const DEFAULT_BACKGROUND = '#eef0f5';
 const POSES_FOLDER = new URL('../../poses/', import.meta.url);
 const SIDES: TouchSide[] = ['nearest', 'front', 'back', 'left', 'right'];
@@ -58,6 +61,7 @@ const ARGUMENT_HELP: Record<string, string> = {
   width: 'image width in pixels (default 1200)',
   height: 'image height in pixels (default 900)',
   transparent: 'true for a transparent background',
+  site: 'the Poser site the link opens (default: the GitHub Pages site)',
 };
 // #endregion
 
@@ -177,6 +181,20 @@ const COMMANDS: Record<string, Command> = {
       if (turn) joints.pelvis = { ...joints.pelvis, turn };
       character.pose = dropToFloor(buildRig(character.profile), { ...character.pose, joints });
       return { text: `${character.profile.name}: ${file.name}. Wrote ${writeScene(scene, args)}` };
+    },
+  },
+
+  link: {
+    summary: 'Make a share link that opens the scene in the app (characters, poses and lights included).',
+    positional: ['scene'],
+    options: { site: 'string' },
+    run: (args) => {
+      // Same packing as the app (src/core/share.ts): deflate-raw, then base64url after "#scene=".
+      const packed = deflateRawSync(JSON.stringify(readScene(args))).toString('base64url');
+      const site = typeof args.site === 'string' ? args.site : SITE_URL;
+      const link = `${site.split('#')[0]}#scene=${packed}`;
+      const warning = link.length > MAX_SHARE_LINK_LENGTH ? `\nWarning: ${link.length} characters is long for chat apps; send the .scene.json file instead.` : '';
+      return { text: link + warning };
     },
   },
 

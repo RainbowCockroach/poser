@@ -86,6 +86,15 @@ body,
   }
 }
 
+/* Fingers need bigger targets than a mouse. */
+@media (pointer: coarse) {
+  button,
+  .button,
+  select {
+    min-height: 40px;
+  }
+}
+
 @media (min-width: 761px) {
   .collapse-toggle {
     display: none;
@@ -103,6 +112,17 @@ body,
   border-bottom: 1px solid var(--border);
 }
 
+.panel-header .row {
+  flex-wrap: nowrap;
+  gap: 6px;
+  margin-top: 0;
+}
+
+.panel-header .row > * {
+  padding: 7px 10px;
+  white-space: nowrap;
+}
+
 .row {
   display: flex;
   flex-wrap: wrap;
@@ -112,6 +132,10 @@ body,
 
 button,
 .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: manipulation;
   font: inherit;
   font-size: 14px;
   padding: 7px 12px;
@@ -268,9 +292,9 @@ select,
 .stage-tools {
   position: absolute;
   z-index: 2;
-  top: 12px;
-  left: 12px;
-  right: 12px;
+  top: max(12px, env(safe-area-inset-top));
+  left: max(12px, env(safe-area-inset-left));
+  right: max(12px, env(safe-area-inset-right));
   display: flex;
   flex-wrap: wrap;
   gap: 6px;

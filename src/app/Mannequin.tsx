@@ -13,6 +13,11 @@ import { restRotation, solvePose, type Pose } from '../core/pose';
 import type { Grab } from './useDragPosing';
 // #endregion
 
+// #region Config
+const IS_TOUCH_SCREEN = matchMedia('(pointer: coarse)').matches;
+const TOUCH_GRAB_RADIUS = 0.08;
+// #endregion
+
 // #region Main flow
 interface MannequinProps {
   profile: CharacterProfile;
@@ -38,6 +43,7 @@ export function Mannequin({ profile, pose, highlightedBones, onGrab }: Mannequin
     const root = new Group();
     const boneGroups: Record<string, Group> = {};
     const meshes: Mesh[] = [];
+    const grabAreas: Mesh[] = [];
 
     for (const bone of rig.bones) {
       const group = new Group();
@@ -45,6 +51,25 @@ export function Mannequin({ profile, pose, highlightedBones, onGrab }: Mannequin
       group.position.set(...bone.offset);
       boneGroups[bone.name] = group;
       (bone.parent ? boneGroups[bone.parent] : root).add(group);
+
+      // Fingers can't hit a hand a few pixels wide; on touch screens an invisible ball around each hand and foot catches the press.
+      // It covers the fingers and toes too, which stay posable with the sliders.
+      if (IS_TOUCH_SCREEN && /^(wrist|ankle)_/.test(bone.name)) {
+        const palmOrFoot = bone.shapes.find((shape) => shape.kind === 'capsule');
+        if (palmOrFoot?.kind === 'capsule') {
+          // A hand is about twice its palm, so its middle is the knuckles; a foot's middle is the middle of its sole.
+          const start = new Vector3(...palmOrFoot.start);
+          const end = new Vector3(...palmOrFoot.end);
+          const isHand = bone.name.startsWith('wrist_');
+          const center = isHand ? end : start.clone().add(end).multiplyScalar(0.5);
+          const radius = Math.max(TOUCH_GRAB_RADIUS, start.distanceTo(end) * (isHand ? 1.25 : 0.8));
+          const grabArea = new Mesh(new SphereGeometry(radius, 12, 8).translate(center.x, center.y, center.z), materials.body);
+          grabArea.visible = false;
+          grabArea.userData = { bone: bone.name };
+          group.add(grabArea);
+          grabAreas.push(grabArea);
+        }
+      }
 
       for (const shape of bone.shapes) {
         const material = shape.kind === 'ball' ? materials.joint : shape.kind === 'ellipsoid' && shape.isAccent ? materials.accent : materials.body;
@@ -56,10 +81,10 @@ export function Mannequin({ profile, pose, highlightedBones, onGrab }: Mannequin
         meshes.push(mesh);
       }
     }
-    return { root, boneGroups, meshes };
+    return { root, boneGroups, meshes, grabAreas };
   }, [rig, materials]);
 
-  useEffect(() => () => model.meshes.forEach((mesh) => mesh.geometry.dispose()), [model]);
+  useEffect(() => () => [...model.meshes, ...model.grabAreas].forEach((mesh) => mesh.geometry.dispose()), [model]);
   useEffect(() => () => Object.values(materials).forEach((material) => material.dispose()), [materials]);
 
   useLayoutEffect(() => {
