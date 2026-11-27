@@ -37,6 +37,8 @@ export function PropMeshes({ props, selectedPropId, isExporting, onSelect, onMov
 
   const startDrag = (prop: PropEntry, event: ThreeEvent<PointerEvent>) => {
     event.stopPropagation();
+    // Right and middle buttons, and Alt with the left one, stay with the camera.
+    if (event.nativeEvent.button !== 0 || event.nativeEvent.altKey) return;
     onSelect(prop.id);
     // The grabbed point slides over a level plane at its own height, so it stays under the finger.
     const plane = new Plane(new Vector3(0, 1, 0), -event.point.y);

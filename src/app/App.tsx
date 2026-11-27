@@ -11,16 +11,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { Grid, Html, OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei';
-import { PerspectiveCamera as ThreePerspectiveCamera, SRGBColorSpace, TextureLoader, Vector2, Vector3, type Texture } from 'three';
+import { Box3, MOUSE, PerspectiveCamera as ThreePerspectiveCamera, SRGBColorSpace, TextureLoader, Vector2, Vector3, type Texture } from 'three';
 import { Mannequin } from './Mannequin';
 import { Panel } from './Panel';
+import { Help } from './Help';
 import { SceneLights } from './SceneLights';
-import { normalizeProfile, type CharacterProfile } from '../core/rig';
-import { CONTROL_FOR_BONE, CONTROLS, type Pose } from '../core/pose';
+import { buildRig, normalizeProfile, type CharacterProfile } from '../core/rig';
+import { CONTROL_FOR_BONE, CONTROLS, forwardKinematics, mirrorPose, solvePose, type Pose } from '../core/pose';
+import { dropToFloor } from '../core/reach';
 import { DEFAULT_LIGHTS, type SceneLight } from '../core/lights';
 import { useDragPosing } from './useDragPosing';
 import { PropMeshes, type PropEntry } from './Props';
-import type { SceneProp } from '../core/props';
+import { propBoxes, type SceneProp } from '../core/props';
 import { DEFAULT_LENS_MM, distanceForLens, fieldOfViewDegrees, type CameraView } from '../core/camera';
 import type { Vec3 } from '../core/rig';
 // #endregion
@@ -73,6 +75,11 @@ const UNDO_STEPS = 100;
 const SAME_GESTURE_MILLISECONDS = 800;
 // Big renders can fail on phones; the long side of a PNG stays under this.
 const MAX_EXPORT_PIXELS = 4096;
+const DOUBLE_CLICK_MILLISECONDS = 350;
+// A closer look never goes nearer than this around a part, and leaves this much air around what it frames.
+const MIN_FRAME_RADIUS = 0.12;
+const FRAME_MARGIN = 0.08;
+const THREE_QUARTER_DEGREES = 35;
 // Safari and every iPhone/iPad browser (WebKit) put the whole scene in shadow with PCF shadow maps; variance shadow maps work there.
 // three.js can't do variance shadows for lamps (point lights), so lamps cast no shadow on those browsers.
 export const SHADOW_TYPE = /AppleWebKit/.test(navigator.userAgent) && !/Chrome|Android/.test(navigator.userAgent) ? 'variance' : 'percentage';
@@ -118,6 +125,49 @@ export function App() {
     setCameraJump(view);
   };
 
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [isCleanView, setIsCleanView] = useState(false);
+  const stageElement = useRef<HTMLDivElement>(null);
+  const lastMissedClick = useRef(0);
+
+  // Moves the camera until these points fill the stage, from the direction given or the one it is looking from now.
+  const frame = (points: Vector3[], towardCamera?: Vector3) => {
+    if (points.length === 0) return;
+    const center = new Box3().setFromPoints(points).getCenter(new Vector3());
+    const radius = Math.max(MIN_FRAME_RADIUS, ...points.map((point) => point.distanceTo(center))) + FRAME_MARGIN;
+    const current = cameraView.current;
+    const direction = towardCamera ?? (current ? new Vector3(...current.position).sub(new Vector3(...current.target)).normalize() : new Vector3(0.1, 0.2, 1).normalize());
+    const stage = stageElement.current;
+    const halfVertical = (fieldOfViewDegrees(lensMm) * Math.PI) / 360;
+    const halfHorizontal = Math.atan(Math.tan(halfVertical) * (stage ? stage.clientWidth / Math.max(1, stage.clientHeight) : 1));
+    const distance = radius / Math.sin(Math.min(halfVertical, halfHorizontal));
+    goToView({ position: center.clone().addScaledVector(direction, distance).toArray(), target: center.toArray(), lensMm });
+  };
+
+  const bonePoints = (character: SceneCharacter, isWanted: (bone: string) => boolean = () => true) => {
+    const rig = buildRig(character.profile);
+    const world = forwardKinematics(rig, solvePose(character.pose));
+    const points = rig.bones.filter((bone) => isWanted(bone.name)).map((bone) => world[bone.name].position);
+    // The head bone sits at the base of the skull; without its top a framed character loses its crown.
+    if (isWanted('head')) {
+      const headHeight = character.profile.heightCm / 100 / character.profile.proportions.headsTall;
+      points.push(new Vector3(0, headHeight, 0).applyQuaternion(world.head.quaternion).add(world.head.position));
+    }
+    return points;
+  };
+
+  // A part's joint, plus what hangs from it: the next joint down, or every finger for a hand.
+  const lookCloser = (character: SceneCharacter, controlName: string) => {
+    const rig = buildRig(character.profile);
+    const own = new Set(Object.values(CONTROLS[controlName].motions).flatMap((motion) => motion.bones.map(([bone]) => bone)));
+    const isHand = controlName.startsWith('wrist_');
+    const wanted = new Set(own);
+    for (const bone of rig.bones) {
+      if (bone.parent && (own.has(bone.parent) || (isHand && wanted.has(bone.parent)))) wanted.add(bone.name);
+    }
+    frame(bonePoints(character, (bone) => wanted.has(bone)));
+  };
+
   const changeScene = (update: (state: SceneState) => SceneState, key: string) => {
     const now = performance.now();
     // A body drag has its own key, so holding still mid-drag doesn't split it into two undo steps.
@@ -148,20 +198,80 @@ export function App() {
     });
   };
 
-  useEffect(() => {
-    const handleKey = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey)) return;
-      if (event.target instanceof HTMLInputElement && event.target.type === 'text') return;
-      const key = event.key.toLowerCase();
-      if (key !== 'z' && key !== 'y') return;
+  const selected = characters.find((character) => character.id === selectedId) ?? null;
+
+  // The shortcut list people see is in Help.tsx; keep the two in step.
+  const handleKey = (event: KeyboardEvent) => {
+    const target = event.target;
+    const isTyping =
+      (target instanceof HTMLInputElement && !['range', 'color', 'checkbox', 'file'].includes(target.type)) || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement;
+    const key = event.key.toLowerCase();
+
+    if (event.metaKey || event.ctrlKey) {
+      if (isTyping || (key !== 'z' && key !== 'y')) return;
       event.preventDefault();
       travel(key === 'y' || event.shiftKey ? 'redo' : 'undo');
-    };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
+      return;
+    }
+    if (isTyping || event.altKey) return;
+
+    if (key === 'escape') {
+      if (isHelpOpen) setIsHelpOpen(false);
+      else if (isCleanView) setIsCleanView(false);
+      else setSelectedControl(null);
+      return;
+    }
+    if (key === '?') return setIsHelpOpen(!isHelpOpen);
+    if (key === 'h') return setIsCleanView(!isCleanView);
+    if (key === 'p') return setIsPinFeet(!isPinFeet);
+    if (key === 'n') {
+      if (characters.length === 0) return;
+      const next = characters[(characters.findIndex((character) => character.id === selectedId) + 1) % characters.length];
+      setSelectedId(next.id);
+      setSelectedControl(null);
+      return;
+    }
+    if (key === 'f') {
+      if (selected && selectedControl && !event.shiftKey) return lookCloser(selected, selectedControl);
+      return frame((selected && !event.shiftKey ? [selected] : characters).flatMap((character) => bonePoints(character)));
+    }
+    if (!selected) return;
+
+    const joints = selected.pose.joints ?? {};
+    if (['1', '2', '3', '4'].includes(key)) {
+      const heading = ((joints.pelvis?.turn ?? 0) * Math.PI) / 180;
+      const facing = new Vector3(Math.sin(heading), 0, Math.cos(heading));
+      const itsLeft = new Vector3(Math.cos(heading), 0, -Math.sin(heading));
+      const threeQuarter = (THREE_QUARTER_DEGREES * Math.PI) / 180;
+      const direction = {
+        '1': facing,
+        '2': itsLeft,
+        '3': facing.clone().negate(),
+        '4': facing.clone().multiplyScalar(Math.cos(threeQuarter)).addScaledVector(itsLeft, Math.sin(threeQuarter)).setY(0.25).normalize(),
+      }[key]!;
+      return frame(bonePoints(selected), direction);
+    }
+    if (key === 'g') return updateCharacter(selected.id, { pose: dropToFloor(buildRig(selected.profile), selected.pose, sceneProps.flatMap(propBoxes)) });
+    if (key === 'x') return updateCharacter(selected.id, { pose: mirrorPose(selected.pose, 'flip') });
+    if (key === 'r' && event.shiftKey) return updateCharacter(selected.id, { pose: { ...selected.pose, joints: joints.pelvis?.turn ? { pelvis: { turn: joints.pelvis.turn } } : {} } });
+    if (!selectedControl) return;
+
+    if (key === 'r') {
+      const { [selectedControl]: _removed, ...rest } = joints;
+      return updateCharacter(selected.id, { pose: { ...selected.pose, joints: rest } });
+    }
+    if (key === 'm' && /_[lr]$/.test(selectedControl)) {
+      updateCharacter(selected.id, { pose: mirrorPose(selected.pose, selectedControl.endsWith('_l') ? 'left-to-right' : 'right-to-left') });
+    }
+  };
+  const latestHandleKey = useRef(handleKey);
+  latestHandleKey.current = handleKey;
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => latestHandleKey.current(event);
+    window.addEventListener('keydown', listener);
+    return () => window.removeEventListener('keydown', listener);
   }, []);
 
-  const selected = characters.find((character) => character.id === selectedId) ?? null;
   const highlightedBones = selectedControl
     ? Object.values(CONTROLS[selectedControl].motions).flatMap((motion) => motion.bones.map(([bone]) => bone))
     : [];
@@ -170,10 +280,20 @@ export function App() {
     changeCharacters((list) => list.map((character) => (character.id === id ? { ...character, ...change } : character)), key);
 
   return (
-    <div className="app">
-      <div className="stage">
+    <div className={isCleanView ? 'app is-clean' : 'app'}>
+      <div className="stage" ref={stageElement}>
         {/* Draws only when something changes, so phones stay cool. */}
-        <Canvas shadows={SHADOW_TYPE} frameloop="demand" dpr={[1, 2]} onPointerMissed={() => setSelectedControl(null)}>
+        <Canvas
+          shadows={SHADOW_TYPE}
+          frameloop="demand"
+          dpr={[1, 2]}
+          onPointerMissed={() => {
+            setSelectedControl(null);
+            const now = performance.now();
+            if (now - lastMissedClick.current < DOUBLE_CLICK_MILLISECONDS) frame(characters.flatMap((character) => bonePoints(character)));
+            lastMissedClick.current = now;
+          }}
+        >
           <Stage
             characters={characters}
             sceneProps={sceneProps}
@@ -184,7 +304,12 @@ export function App() {
             selectedPropId={selectedPropId}
             onSelectProp={setSelectedPropId}
             onMoveProp={(id, position, gestureKey) => changeScene((state) => ({ ...state, sceneProps: state.sceneProps.map((prop) => (prop.id === id ? { ...prop, position } : prop)) }), gestureKey)}
-            highlightedBones={highlightedBones}
+            highlightedBones={isCleanView ? [] : highlightedBones}
+            isCleanView={isCleanView}
+            onLookCloser={(character, bone) => {
+              const controlName = CONTROL_FOR_BONE[bone];
+              if (controlName) lookCloser(character, controlName);
+            }}
             isFrontView={isFrontView}
             isPinFeet={isPinFeet}
             exportRequest={exportRequest}
@@ -209,11 +334,28 @@ export function App() {
           <button onClick={() => travel('redo')} disabled={scene.future.length === 0} title="Redo (Ctrl/Cmd+Shift+Z)">
             Redo
           </button>
-          <button className={isPinFeet ? 'is-active' : ''} onClick={() => setIsPinFeet(!isPinFeet)} title="When on, dragging the hips bends the legs and keeps the feet where they are">
-            Pin feet {isPinFeet ? 'on' : 'off'}
+          <button className={isPinFeet ? 'is-active' : ''} aria-pressed={isPinFeet} onClick={() => setIsPinFeet(!isPinFeet)} title="When on, dragging the hips bends the legs and keeps the feet where they are (P)">
+            {isPinFeet ? 'Feet pinned' : 'Pin feet'}
+          </button>
+          <button onClick={() => setIsHelpOpen(true)} title="Mouse, touch and keyboard shortcuts (?)" aria-label="Shortcuts">
+            ?
           </button>
         </div>
+        {isCleanView && (
+          <button className="show-controls" onClick={() => setIsCleanView(false)}>
+            Show controls
+          </button>
+        )}
       </div>
+      {isHelpOpen && (
+        <Help
+          onClose={() => setIsHelpOpen(false)}
+          onHideControls={() => {
+            setIsHelpOpen(false);
+            setIsCleanView(true);
+          }}
+        />
+      )}
       <Panel
         characters={characters}
         sceneProps={sceneProps}
@@ -281,6 +423,8 @@ interface StageProps {
   onSelectProp: (id: string) => void;
   onMoveProp: (id: string, position: Vec3, gestureKey: string) => void;
   highlightedBones: string[];
+  isCleanView: boolean;
+  onLookCloser: (character: SceneCharacter, bone: string) => void;
   isFrontView: boolean;
   isPinFeet: boolean;
   exportRequest: ExportRequest | null;
@@ -396,7 +540,7 @@ function Stage(props: StageProps) {
       ) : (
         <PerspectiveCamera key={props.sceneVersion} makeDefault position={[0.6, 1.5, startDistance]} fov={fieldOfViewDegrees(props.lensMm)} />
       )}
-      <OrbitControls key={isFrontView ? `front-${focusX}` : `free-${props.sceneVersion}`} target={[isFrontView ? focusX : 0, isFrontView ? focusHeight / 2 : 1, 0]} enableRotate={!isFrontView} makeDefault onChange={reportCamera} />
+      <OrbitControls key={isFrontView ? `front-${focusX}` : `free-${props.sceneVersion}`} target={[isFrontView ? focusX : 0, isFrontView ? focusHeight / 2 : 1, 0]} enableRotate={!isFrontView} mouseButtons={{ LEFT: MOUSE.ROTATE, MIDDLE: MOUSE.ROTATE, RIGHT: MOUSE.PAN }} zoomToCursor makeDefault onChange={reportCamera} />
 
       <SceneLights lights={lights} selectedLightId={props.selectedLightId} isShowingMarkers={!isExporting} />
 
@@ -435,9 +579,13 @@ function Stage(props: StageProps) {
               onSelect(character.id, CONTROL_FOR_BONE[grab.bone] ?? null);
               startDrag(character, grab);
             }}
+            onLookCloser={(bone) => {
+              onSelect(character.id, CONTROL_FOR_BONE[bone] ?? null);
+              props.onLookCloser(character, bone);
+            }}
           />
           {character.reference && <ReferenceImage character={character} isVisible={!isExporting} />}
-          {character.id === selected?.id && (
+          {character.id === selected?.id && !props.isCleanView && (
             <Html position={[character.pose.position?.[0] ?? 0, character.profile.heightCm / 100 + 0.12, character.pose.position?.[2] ?? 0]} center className="name-label" zIndexRange={[1, 0]}>
               {character.profile.name} · {character.profile.heightCm} cm
             </Html>

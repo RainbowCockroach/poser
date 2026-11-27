@@ -18,6 +18,7 @@ import { buildRig, DEFAULT_PROFILE, normalizeProfile, type CharacterProfile } fr
 import { DEFAULT_LIGHTS, LIGHT_PRESETS, MAX_INTENSITY, newLight, normalizeLight, placementOf, positionFromPlacement, type LightKind, type LightPlacement } from '../core/lights';
 import { newProp, normalizeProp, PROP_KINDS, propBoxes, MAX_PROP_SIZE, MIN_PROP_SIZE, type PropKind } from '../core/props';
 import type { PropEntry } from './Props';
+import { motionWords, partName } from './labels';
 import { LENS_PRESETS, MAX_LENS_MM, MIN_LENS_MM, normalizeView, type CameraView } from '../core/camera';
 import { DEFAULT_BACKGROUND, newCharacterId, newLightId, newPropId, type ExportRequest, type LightEntry, type SceneCharacter, type SceneFile, type SceneState } from './App';
 // #endregion
@@ -371,12 +372,12 @@ function CharacterEditor(props: CharacterEditorProps) {
     <>
       <details open>
         <summary>Pose</summary>
-        <p className="hint">Drag a body part to bend it. Drag a hand or foot and the whole limb follows. Drag the hips to move the character. Or pick a joint:</p>
+        <p className="hint">Drag a body part to bend it. Drag a hand or foot and the whole limb follows. Double-click a part to look closer. Press ? for every shortcut.</p>
         <select value={selectedControl ?? ''} onChange={(event) => onSelectControl(event.target.value || null)}>
-          <option value="">— choose a joint —</option>
-          {Object.entries(CONTROLS).map(([name, entry]) => (
+          <option value="">— choose a body part —</option>
+          {Object.keys(CONTROLS).map((name) => (
             <option key={name} value={name}>
-              {entry.label}
+              {partName(name)}
             </option>
           ))}
         </select>
@@ -385,7 +386,8 @@ function CharacterEditor(props: CharacterEditorProps) {
           Object.entries(control.motions).map(([motionName, motion]) => (
             <Slider
               key={motionName}
-              label={motionName.replace(/_/g, ' ')}
+              label={motionWords(selectedControl, motionName).label}
+              ends={[motionWords(selectedControl, motionName).low, motionWords(selectedControl, motionName).high]}
               unit="°"
               min={motion.min}
               max={motion.max}
@@ -402,7 +404,7 @@ function CharacterEditor(props: CharacterEditorProps) {
                 setPose({ joints: rest });
               }}
             >
-              Reset joint
+              Reset this part
             </button>
           )}
           <button onClick={() => setPose({ joints: joints.pelvis?.turn ? { pelvis: { turn: joints.pelvis.turn } } : {} })}>Reset pose</button>
@@ -927,6 +929,7 @@ function ImageExport({ onExport }: { onExport: (request: ExportRequest) => void 
 // #region Helpers
 interface SliderProps {
   label: string;
+  ends?: [string, string];
   unit?: string;
   min: number;
   max: number;
@@ -935,18 +938,24 @@ interface SliderProps {
   onChange: (value: number) => void;
 }
 
-function Slider({ label, unit = '', min, max, step, value, onChange }: SliderProps) {
+function Slider({ label, ends, unit = '', min, max, step, value, onChange }: SliderProps) {
   const decimals = step < 0.1 ? 2 : step < 1 ? 1 : 0;
   return (
     <label className="slider">
       <span>
-        {label}
+        {label.charAt(0).toUpperCase() + label.slice(1)}
         <output>
           {value.toFixed(decimals)}
           {unit}
         </output>
       </span>
       <input type="range" min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.target.value))} />
+      {ends && (
+        <div className="slider-ends">
+          <small>{ends[0]}</small>
+          <small>{ends[1]}</small>
+        </div>
+      )}
     </label>
   );
 }

@@ -76,6 +76,24 @@ values, see sources). Coupled motion:
    current view is saved with the scene and share links, so they open from the same angle. CLI: `camera` sets it,
    `render` uses it (or `--view <name>`, `--lens`).
 
+### Interface redesign
+
+For artists who are not technical: the stage is the tool, the panel shows one thing at a time, pictures and plain
+words. Desktop with a mouse and tablet with a pencil come first. Every action must work with one button (a pen has
+no wheel or middle button), so extra buttons and keys are only faster ways.
+
+10. ✅ Quick wins in the old layout: plain-word slider labels with a word at each end (`src/app/labels.ts`; files and
+    the CLI keep the anatomical names), hover highlight, a small hand or foot is grabbed whole (fingers and toes take
+    over once it is 110 px on screen), double-click to look closer, shortcut keys with a "?" sheet, middle-drag and
+    Alt-drag to turn the camera anywhere, zoom toward the pointer, clean view (H).
+11. New shell: five modes (Pose, Library, Body, Scene, Camera) on a rail (tab bar on phones), a card that shows only
+    the controls of what is selected with exact numbers behind "More", a bottom sheet on phones, files in one menu.
+12. Handles on the selected character: dots on hands, feet, elbows, knees, head, chest and hips, one twist ring, a
+    floor ring to turn the character, pins per hand and foot, a right-click / long-press menu.
+13. Pictures: thumbnails for poses, hand shapes, lenses and light presets.
+14. Touch by dragging a hand onto a body part; a first-run guide on the stage; pencil poses while fingers move the
+    camera (optional).
+
 ## Sources
 
 - Range of motion: https://www.physio-pedia.com/Range_of_Motion_Normative_Values, https://wikem.org/wiki/Joint_ROM_(Table)

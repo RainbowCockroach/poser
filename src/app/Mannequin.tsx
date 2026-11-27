@@ -2,20 +2,27 @@
  * Draws one character as a segmented art mannequin: rounded segments with ball joints.
  * The bone tree comes from buildRig(profile); the pose is applied with solvePose(pose).
  * Pressing a segment reports the bone and the exact point grabbed, for selecting and drag posing.
+ * While a hand or foot is small on screen, a press on a finger or toe grabs the whole hand or foot,
+ * so pulling a hand moves the arm instead of bending one finger. Zoom in and the fingers take over.
+ * Pressing the same part twice quickly asks for a closer look at it.
  */
 
 // #region Setup
-import { useEffect, useLayoutEffect, useMemo } from 'react';
-import { Color, Group, LatheGeometry, Matrix4, Mesh, MeshStandardMaterial, Quaternion, SphereGeometry, Vector2, Vector3, type BufferGeometry } from 'three';
-import type { ThreeEvent } from '@react-three/fiber';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Color, Group, LatheGeometry, Matrix4, Mesh, MeshStandardMaterial, PerspectiveCamera, Quaternion, SphereGeometry, Vector2, Vector3, type BufferGeometry, type Object3D } from 'three';
+import { useThree, type ThreeEvent } from '@react-three/fiber';
 import { buildRig, type CharacterProfile, type Shape } from '../core/rig';
-import { restRotation, solvePose, type Pose } from '../core/pose';
+import { CONTROL_FOR_BONE, restRotation, solvePose, type Pose } from '../core/pose';
 import type { Grab } from './useDragPosing';
 // #endregion
 
 // #region Config
 const IS_TOUCH_SCREEN = matchMedia('(pointer: coarse)').matches;
 const TOUCH_GRAB_RADIUS = 0.08;
+// A hand or foot shorter than this on screen is grabbed whole; its fingers and toes are too thin to aim at.
+const WHOLE_HAND_BELOW_PIXELS = 110;
+const DOUBLE_PRESS_MILLISECONDS = 350;
+const DOUBLE_PRESS_PIXELS = 24;
 // #endregion
 
 // #region Main flow
@@ -24,10 +31,17 @@ interface MannequinProps {
   pose: Pose;
   highlightedBones: string[];
   onGrab: (grab: Grab) => void;
+  onLookCloser: (bone: string) => void;
 }
 
-export function Mannequin({ profile, pose, highlightedBones, onGrab }: MannequinProps) {
+export function Mannequin({ profile, pose, highlightedBones, onGrab, onLookCloser }: MannequinProps) {
   const rig = useMemo(() => buildRig(profile), [profile]);
+  const camera = useThree((state) => state.camera);
+  const viewportHeight = useThree((state) => state.size.height);
+  const canvas = useThree((state) => state.gl.domElement);
+  const invalidate = useThree((state) => state.invalidate);
+  const [hoveredControl, setHoveredControl] = useState<string | null>(null);
+  const lastPress = useRef({ bone: '', time: 0, clientX: 0, clientY: 0 });
 
   const materials = useMemo(() => {
     const base = new Color(profile.color);
@@ -36,6 +50,7 @@ export function Mannequin({ profile, pose, highlightedBones, onGrab }: Mannequin
       joint: new MeshStandardMaterial({ color: base.clone().multiplyScalar(0.82), roughness: 0.5 }),
       accent: new MeshStandardMaterial({ color: base.clone().multiplyScalar(0.35), roughness: 0.6 }),
       highlight: new MeshStandardMaterial({ color: '#ff8a3d', emissive: '#ff6a00', emissiveIntensity: 0.25, roughness: 0.5 }),
+      hover: new MeshStandardMaterial({ color: base.clone().lerp(new Color('#ffffff'), 0.3), emissive: '#ff6a00', emissiveIntensity: 0.12, roughness: 0.6 }),
     };
   }, [profile.color]);
 
@@ -98,26 +113,74 @@ export function Mannequin({ profile, pose, highlightedBones, onGrab }: Mannequin
 
   useLayoutEffect(() => {
     for (const mesh of model.meshes) {
-      mesh.material = highlightedBones.includes(mesh.userData.bone) ? materials.highlight : mesh.userData.material;
+      const bone: string = mesh.userData.bone;
+      const isHovered = hoveredControl !== null && CONTROL_FOR_BONE[bone] === hoveredControl;
+      mesh.material = highlightedBones.includes(bone) ? materials.highlight : isHovered ? materials.hover : mesh.userData.material;
     }
-  }, [model, materials, highlightedBones]);
+    invalidate();
+  }, [model, materials, highlightedBones, hoveredControl]);
+
+  // The camera can move a part out from under a pointer that stays still (a view key, a closer look), so moving it drops the hover.
+  const controls = useThree((state) => state.controls);
+  useEffect(() => {
+    if (!hoveredControl) return;
+    const clearHover = () => setHoveredControl(null);
+    canvas.style.cursor = 'grab';
+    controls?.addEventListener('change' as never, clearHover);
+    return () => {
+      canvas.style.cursor = '';
+      controls?.removeEventListener('change' as never, clearHover);
+    };
+  }, [hoveredControl, canvas, controls]);
+
+  const grabbedBoneGroup = (object: Object3D, point: Vector3): Object3D => {
+    const boneGroup = object.parent!;
+    const side = boneGroup.name.slice(-1);
+    const whole = /^(thumb|index|middle|ring|pinky)_\d_[lr]$/.test(boneGroup.name) ? `wrist_${side}` : /^toes_[lr]$/.test(boneGroup.name) ? `ankle_${side}` : null;
+    if (!whole) return boneGroup;
+    const palmOrFoot = rig.bones.find((bone) => bone.name === whole)?.shapes.find((shape) => shape.kind === 'capsule');
+    if (palmOrFoot?.kind !== 'capsule') return boneGroup;
+    // A hand is about twice its palm; a foot is a little longer than its capsule because of the toes.
+    const length = new Vector3(...palmOrFoot.start).distanceTo(new Vector3(...palmOrFoot.end)) * (whole.startsWith('wrist') ? 2 : 1.3);
+    const metersPerPixel = camera instanceof PerspectiveCamera ? (2 * Math.tan((camera.fov * Math.PI) / 360) * camera.position.distanceTo(point)) / viewportHeight : 1 / camera.zoom;
+    return length / metersPerPixel < WHOLE_HAND_BELOW_PIXELS ? model.boneGroups[whole] : boneGroup;
+  };
 
   const handlePointerDown = (event: ThreeEvent<PointerEvent>) => {
     event.stopPropagation();
-    // Right and middle buttons stay with the camera (pan).
-    if (event.nativeEvent.button !== 0) return;
-    const boneGroup = event.object.parent!;
+    // Right and middle buttons, and Alt with the left one, stay with the camera.
+    if (event.nativeEvent.button !== 0 || event.nativeEvent.altKey) return;
+    const boneGroup = grabbedBoneGroup(event.object, event.point);
+    const { clientX, clientY } = event.nativeEvent;
+
+    const previous = lastPress.current;
+    const now = performance.now();
+    lastPress.current = { bone: boneGroup.name, time: now, clientX, clientY };
+    if (previous.bone === boneGroup.name && now - previous.time < DOUBLE_PRESS_MILLISECONDS && Math.hypot(clientX - previous.clientX, clientY - previous.clientY) < DOUBLE_PRESS_PIXELS) {
+      lastPress.current.time = 0;
+      onLookCloser(boneGroup.name);
+      return;
+    }
+
     onGrab({
-      bone: event.object.userData.bone,
+      bone: boneGroup.name,
       localPoint: boneGroup.worldToLocal(event.point.clone()).toArray(),
       worldPoint: event.point.clone(),
       pointerId: event.pointerId,
-      clientX: event.nativeEvent.clientX,
-      clientY: event.nativeEvent.clientY,
+      clientX,
+      clientY,
     });
   };
 
-  return <primitive object={model.root} onPointerDown={handlePointerDown} />;
+  // Fingers have no hover: a tap would leave the highlight stuck on.
+  const handlePointerMove = (event: ThreeEvent<PointerEvent>) => {
+    if (event.nativeEvent.pointerType === 'touch') return;
+    event.stopPropagation();
+    const control = CONTROL_FOR_BONE[grabbedBoneGroup(event.object, event.point).name] ?? null;
+    if (control !== hoveredControl) setHoveredControl(control);
+  };
+
+  return <primitive object={model.root} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerOut={() => setHoveredControl(null)} />;
 }
 // #endregion
 
