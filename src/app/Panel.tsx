@@ -1,15 +1,15 @@
 /*
- * Edit panel: pick a character, pose its joints with anatomical sliders, mirror poses, apply poses
- * from the library, shape its body, place it, and open/save scene, character and pose files for sharing.
- * Scene-wide sections below the character: props (chair, wall…), camera (lens, saved views), lights (presets or one
- * by one) and saving the view as a PNG.
- * Joint sliders only allow the range a real body can do (limits live in core/pose.ts).
+ * Everything on top of the stage: the top bar (file menu, characters, undo), the five modes (a rail on the left,
+ * a tab bar on phones) and the card for the current mode (on the right, a bottom sheet on phones).
+ * Pose mode shows only the selected body part; with none selected it shows whole-pose actions. Exact numbers,
+ * the body part list and placing by numbers sit behind "More".
+ * Joint sliders only allow the range a real body can do (limits live in core/pose.ts); labels are in labels.ts.
  * "My poses" are kept in this browser (localStorage); download a pose to share it.
  */
 
 // #region Setup
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
-import { CONTROLS, mirrorPose, type Pose, type PoseFile } from '../core/pose';
+import { CONTROLS, copyLimbToOtherSide, mirrorPose, type Pose, type PoseFile } from '../core/pose';
 import { dropToFloor } from '../core/reach';
 import { MAX_SHARE_LINK_LENGTH, packForLink, readShareHash, shareLink, unpackFromLink, type SharedKind } from '../core/share';
 import { applyHandShape, HAND_SHAPES, type HandSide } from '../core/hands';
@@ -24,10 +24,30 @@ import { DEFAULT_BACKGROUND, newCharacterId, newLightId, newPropId, type ExportR
 // #endregion
 
 // #region Config
+export type Mode = 'pose' | 'library' | 'body' | 'scene' | 'camera';
+export type ViewName = 'front' | 'side' | 'back' | 'three-quarter';
+
+const MODES: { mode: Mode; label: string }[] = [
+  { mode: 'pose', label: 'Pose' },
+  { mode: 'library', label: 'Library' },
+  { mode: 'body', label: 'Body' },
+  { mode: 'scene', label: 'Scene' },
+  { mode: 'camera', label: 'Camera' },
+];
+
+const VIEW_BUTTONS: { view: ViewName; label: string; key: string }[] = [
+  { view: 'front', label: 'Front', key: '1' },
+  { view: 'side', label: 'Side', key: '2' },
+  { view: 'back', label: 'Back', key: '3' },
+  { view: 'three-quarter', label: 'Three-quarter', key: '4' },
+];
+
 const PRESET_POSES = (Object.values(import.meta.glob('../../poses/*.pose.json', { eager: true, import: 'default' })) as PoseFile[]).sort((a, b) =>
   a.name.localeCompare(b.name),
 );
 const MY_POSES_STORAGE_KEY = 'poser.myPoses';
+const SHOW_MORE_STORAGE_KEY = 'poser.showMore';
+const MESSAGE_MILLISECONDS = 5000;
 const PROPORTION_SLIDERS: { key: keyof CharacterProfile['proportions']; label: string; min: number; max: number; step: number }[] = [
   { key: 'headsTall', label: 'Heads tall', min: 2, max: 9, step: 0.1 },
   { key: 'neckLength', label: 'Neck length', min: 0.3, max: 2, step: 0.05 },
@@ -71,6 +91,8 @@ interface PanelProps {
   selectedControl: string | null;
   selectedLightId: string | null;
   selectedPropId: string | null;
+  mode: Mode;
+  onChangeMode: (mode: Mode) => void;
   onSelectCharacter: (id: string) => void;
   onSelectControl: (control: string | null) => void;
   onSelectLight: (id: string | null) => void;
@@ -82,6 +104,18 @@ interface PanelProps {
   getCameraView: () => CameraView | null;
   onGoToView: (view: CameraView) => void;
   onChangeViews: (update: (views: CameraView[]) => CameraView[], key: string) => void;
+  onLookFrom: (view: ViewName) => void;
+  onFrameAll: () => void;
+  isFrontView: boolean;
+  onToggleFrontView: () => void;
+  isPinFeet: boolean;
+  onTogglePinFeet: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  onTravel: (direction: 'undo' | 'redo') => void;
+  onOpenHelp: () => void;
+  isCardFolded: boolean;
+  onFoldCard: (isFolded: boolean) => void;
   onUpdateCharacter: (id: string, change: Partial<SceneCharacter>) => void;
   onChangeLights: (update: (lights: LightEntry[]) => LightEntry[], key: string) => void;
   onChangeBackground: (color: string) => void;
@@ -92,10 +126,18 @@ interface PanelProps {
 }
 
 export function Panel(props: PanelProps) {
-  const { characters, selected, selectedControl } = props;
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const { characters, selected, selectedControl, mode } = props;
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isExportOpen, setIsExportOpen] = useState(false);
   const [message, setMessage] = useState('');
   const [sharedLink, setSharedLink] = useState('');
+  const [isShowingMore, setIsShowingMore] = useState(() => {
+    try {
+      return localStorage.getItem(SHOW_MORE_STORAGE_KEY) === 'yes';
+    } catch {
+      return false;
+    }
+  });
   const [myPoses, setMyPoses] = useState<PoseFile[]>(() => {
     try {
       const stored = JSON.parse(localStorage.getItem(MY_POSES_STORAGE_KEY) ?? '[]');
@@ -104,6 +146,21 @@ export function Panel(props: PanelProps) {
       return [];
     }
   });
+
+  useEffect(() => {
+    if (!message) return;
+    const timer = setTimeout(() => setMessage(''), MESSAGE_MILLISECONDS);
+    return () => clearTimeout(timer);
+  }, [message]);
+
+  const toggleMore = () => {
+    setIsShowingMore(!isShowingMore);
+    try {
+      localStorage.setItem(SHOW_MORE_STORAGE_KEY, isShowingMore ? 'no' : 'yes');
+    } catch {
+      // Only a convenience; the toggle still works for this visit.
+    }
+  };
 
   const saveMyPoses = (poses: PoseFile[]) => {
     setMyPoses(poses);
@@ -195,8 +252,6 @@ export function Panel(props: PanelProps) {
   }, []);
 
   const share = async (kind: SharedKind, data: object, title: string) => {
-    // On a phone the panel may be folded away; the result has to be seen.
-    setIsCollapsed(false);
     setSharedLink('');
     let link: string;
     try {
@@ -249,35 +304,41 @@ export function Panel(props: PanelProps) {
     URL.revokeObjectURL(link.href);
   };
 
-  return (
-    <aside className={`panel ${isCollapsed ? 'is-collapsed' : ''}`}>
-      <header className="panel-header">
-        <strong>Poser</strong>
-        <div className="row">
-          <label className="button">
-            Open file
-            <input type="file" accept=".json,application/json" onChange={openFile} hidden />
-          </label>
-          <button onClick={saveScene}>Save scene</button>
-          <button onClick={() => share('scene', sceneFile(), 'this scene')} title="Copy or send a link that opens this scene, characters and poses included">
-            Share
-          </button>
-          <button className="collapse-toggle" onClick={() => setIsCollapsed(!isCollapsed)}>
-            {isCollapsed ? '▲' : '▼'}
-          </button>
-        </div>
-      </header>
-      {message && <p className="message">{message}</p>}
-      {sharedLink && (
-        <label className="field message">
-          Copy this link:
-          <input readOnly value={sharedLink} onFocus={(event) => event.currentTarget.select()} />
-        </label>
-      )}
+  const cardTitle = {
+    pose: selected ? (selectedControl ? partName(selectedControl) : selected.profile.name) : 'Pose',
+    library: 'Library',
+    body: selected ? `${selected.profile.name}'s body` : 'Body',
+    scene: 'Scene',
+    camera: 'Camera',
+  }[mode];
+  const isEmptyCharacterMode = !selected && (mode === 'pose' || mode === 'library' || mode === 'body');
 
-      <div className="panel-body">
-        <section>
-          <div className="chips">
+  return (
+    <>
+      <header className="topbar">
+        <div className="topbar-group">
+          <div className="menu">
+            <button onClick={() => setIsMenuOpen(!isMenuOpen)} aria-expanded={isMenuOpen} aria-label="File menu" title="Open, save, share">
+              ☰
+            </button>
+            {isMenuOpen && (
+              <>
+                <div className="menu-backdrop" onClick={() => setIsMenuOpen(false)} />
+                <div className="menu-list" onClick={() => setIsMenuOpen(false)}>
+                  <label className="button">
+                    Open file…
+                    <input type="file" accept=".json,application/json" onChange={openFile} hidden />
+                  </label>
+                  <button onClick={saveScene}>Save scene</button>
+                  <button onClick={() => share('scene', sceneFile(), 'this scene')} title="Copy or send a link that opens this scene, characters and poses included">
+                    Share link
+                  </button>
+                  <button onClick={() => setIsExportOpen(true)}>Save image…</button>
+                </div>
+              </>
+            )}
+          </div>
+          <div className="character-chips">
             {characters.map((character) => (
               <button
                 key={character.id}
@@ -288,62 +349,257 @@ export function Panel(props: PanelProps) {
                 {character.profile.name}
               </button>
             ))}
-            <button className="chip" onClick={() => props.onAddCharacter(DEFAULT_PROFILE)}>
-              + Mannequin
+            <button className="chip" onClick={() => props.onAddCharacter(DEFAULT_PROFILE)} title="Add a mannequin" aria-label="Add a mannequin">
+              +
             </button>
           </div>
-        </section>
+        </div>
+        <div className="topbar-group">
+          {props.isFrontView && (
+            <button className="is-active" onClick={props.onToggleFrontView}>
+              Back to 3D
+            </button>
+          )}
+          <button onClick={() => props.onTravel('undo')} disabled={!props.canUndo} title="Undo (Ctrl/Cmd Z)" aria-label="Undo">
+            ↶
+          </button>
+          <button onClick={() => props.onTravel('redo')} disabled={!props.canRedo} title="Redo (Ctrl/Cmd Shift Z)" aria-label="Redo">
+            ↷
+          </button>
+          <button onClick={props.onOpenHelp} title="Mouse, touch and keyboard shortcuts (?)" aria-label="Shortcuts">
+            ?
+          </button>
+        </div>
+      </header>
 
-        {selected && (
-          <CharacterEditor
-            {...props}
-            selected={selected}
-            selectedControl={selectedControl}
-            myPoses={myPoses}
-            onApplyPose={applyPose}
-            onSaveMyPoses={saveMyPoses}
-            onShareCharacter={() => share('character', selected.profile, selected.profile.name)}
-          />
-        )}
+      {(message || sharedLink) && (
+        <div className="toast" role="status">
+          {message && <span>{message}</span>}
+          {sharedLink && (
+            <label className="field">
+              Copy this link:
+              <input readOnly value={sharedLink} onFocus={(event) => event.currentTarget.select()} />
+            </label>
+          )}
+          {sharedLink && <button onClick={() => setSharedLink('')}>Done</button>}
+        </div>
+      )}
 
-        <PropsEditor {...props} />
-        <CameraEditor {...props} />
-        <LightsEditor {...props} />
-        <ImageExport onExport={props.onExport} />
-      </div>
-    </aside>
+      <nav className="modes" aria-label="Modes">
+        {MODES.map((entry) => (
+          <button
+            key={entry.mode}
+            className={entry.mode === mode ? 'is-active' : ''}
+            aria-pressed={entry.mode === mode}
+            onClick={() => {
+              props.onChangeMode(entry.mode);
+              props.onFoldCard(false);
+            }}
+          >
+            {entry.label}
+          </button>
+        ))}
+      </nav>
+
+      <aside className={props.isCardFolded ? 'card is-collapsed' : 'card'} aria-label={cardTitle}>
+        <header className="card-header">
+          <strong>{cardTitle}</strong>
+          <button className="card-toggle" onClick={() => props.onFoldCard(!props.isCardFolded)} aria-label={props.isCardFolded ? 'Show the card' : 'Fold the card away'}>
+            {props.isCardFolded ? '▴' : '▾'}
+          </button>
+        </header>
+        <div className="card-body">
+          {isEmptyCharacterMode && (
+            <>
+              <p className="hint">No character yet.</p>
+              <button onClick={() => props.onAddCharacter(DEFAULT_PROFILE)}>Add a mannequin</button>
+            </>
+          )}
+          {selected && mode === 'pose' && <PoseCard {...props} selected={selected} isShowingMore={isShowingMore} onToggleMore={toggleMore} />}
+          {selected && mode === 'library' && <LibraryCard {...props} selected={selected} myPoses={myPoses} onApplyPose={applyPose} onSaveMyPoses={saveMyPoses} />}
+          {selected && mode === 'body' && <BodyCard {...props} selected={selected} onShareCharacter={() => share('character', selected.profile, selected.profile.name)} />}
+          {mode === 'scene' && (
+            <>
+              <PropsEditor {...props} />
+              <LightsEditor {...props} />
+            </>
+          )}
+          {mode === 'camera' && <CameraEditor {...props} />}
+        </div>
+      </aside>
+
+      {isExportOpen && (
+        <div className="dialog-backdrop" onClick={() => setIsExportOpen(false)}>
+          <div className="dialog" role="dialog" aria-label="Save image" onClick={(event) => event.stopPropagation()}>
+            <header>
+              <strong>Save image</strong>
+              <button onClick={() => setIsExportOpen(false)}>Close</button>
+            </header>
+            <ImageExport
+              onExport={(request) => {
+                setIsExportOpen(false);
+                props.onExport(request);
+              }}
+            />
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
-interface CharacterEditorProps extends PanelProps {
+interface PoseCardProps extends PanelProps {
+  selected: SceneCharacter;
+  isShowingMore: boolean;
+  onToggleMore: () => void;
+}
+
+function PoseCard(props: PoseCardProps) {
+  const { selected, selectedControl, onSelectControl, onUpdateCharacter, isShowingMore } = props;
+  const { profile, pose } = selected;
+  const position = pose.position ?? [0, 0, 0];
+  const joints = pose.joints ?? {};
+  const control = selectedControl ? CONTROLS[selectedControl] : null;
+  const side = selectedControl?.match(/_(l|r)$/)?.[1] as 'l' | 'r' | undefined;
+  const isHandPart = !!selectedControl && /^(wrist|thumb|index|middle|ring|pinky)_/.test(selectedControl);
+  const isLegPart = !!selectedControl && /^(hip|knee|ankle|toes)_/.test(selectedControl);
+
+  const setPose = (change: Partial<Pose>) => onUpdateCharacter(selected.id, { pose: { ...pose, ...change } });
+  const setMotion = (controlName: string, motion: string, degrees: number) =>
+    setPose({ joints: { ...joints, [controlName]: { ...joints[controlName], [motion]: degrees } } });
+
+  return (
+    <>
+      {control && selectedControl ? (
+        <>
+          {Object.entries(control.motions).map(([motionName, motion]) => {
+            const words = motionWords(selectedControl, motionName);
+            return (
+              <Slider
+                key={motionName}
+                label={words.label}
+                ends={[words.low, words.high]}
+                unit="°"
+                isShowingValue={isShowingMore}
+                min={motion.min}
+                max={motion.max}
+                step={1}
+                value={joints[selectedControl]?.[motionName] ?? 0}
+                onChange={(degrees) => setMotion(selectedControl, motionName, degrees)}
+              />
+            );
+          })}
+          {isHandPart && side && (
+            <>
+              <h3>Hand shape</h3>
+              <div className="row">
+                {Object.entries(HAND_SHAPES).map(([name, shape]) => (
+                  <button key={name} onClick={() => setPose(applyHandShape(pose, side, name))}>
+                    {shape.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+          <div className="row">
+            <button
+              onClick={() => {
+                const { [selectedControl]: _removed, ...rest } = joints;
+                setPose({ joints: rest });
+              }}
+              title="Key R"
+            >
+              Reset this part
+            </button>
+            {side && (
+              <button onClick={() => setPose(copyLimbToOtherSide(pose, selectedControl))} title="Key M">
+                Copy this {isLegPart ? 'leg' : 'arm'} to the other side
+              </button>
+            )}
+            {selectedControl === 'pelvis' && (
+              <button className={props.isPinFeet ? 'is-active' : ''} aria-pressed={props.isPinFeet} onClick={props.onTogglePinFeet} title="When on, dragging the hips bends the legs and keeps the feet where they are (key P)">
+                {props.isPinFeet ? 'Feet pinned' : 'Pin feet'}
+              </button>
+            )}
+            <button onClick={() => onSelectControl(null)} title="Key Esc">
+              Done
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="hint">Drag a body part to pose it. Double-click a part to look closer.</p>
+          <div className="row">
+            <button onClick={() => setPose({ joints: joints.pelvis?.turn ? { pelvis: { turn: joints.pelvis.turn } } : {} })} title="Key Shift R">
+              Reset pose
+            </button>
+            <button onClick={() => setPose(mirrorPose(pose, 'flip'))} title="Swap left and right (key X)">
+              Flip
+            </button>
+            <button onClick={() => setPose(dropToFloor(buildRig(profile), pose, props.sceneProps.flatMap(propBoxes)))} title="Move up or down until the lowest body part touches the floor, or a seat or step just under it (key G)">
+              Drop to floor
+            </button>
+            <button className={props.isPinFeet ? 'is-active' : ''} aria-pressed={props.isPinFeet} onClick={props.onTogglePinFeet} title="When on, dragging the hips bends the legs and keeps the feet where they are (key P)">
+              {props.isPinFeet ? 'Feet pinned' : 'Pin feet'}
+            </button>
+          </div>
+          <h3>Hands</h3>
+          <div className="row">
+            {Object.entries(HAND_SHAPES).map(([name, shape]) => (
+              <button key={name} onClick={() => setPose(applyHandShape(pose, 'both', name))}>
+                {shape.label}
+              </button>
+            ))}
+          </div>
+          <TouchEditor key={selected.id} characters={props.characters} selected={selected} onUpdateCharacter={onUpdateCharacter} />
+        </>
+      )}
+
+      {isShowingMore && (
+        <section className="card-section">
+          <h3>Body part</h3>
+          <select value={selectedControl ?? ''} onChange={(event) => onSelectControl(event.target.value || null)} aria-label="Body part">
+            <option value="">— whole body —</option>
+            {Object.keys(CONTROLS).map((name) => (
+              <option key={name} value={name}>
+                {partName(name)}
+              </option>
+            ))}
+          </select>
+          <div className="row">
+            <button onClick={() => setPose(mirrorPose(pose, 'left-to-right'))} title="Copy the left arm and leg onto the right">
+              Mirror L → R
+            </button>
+            <button onClick={() => setPose(mirrorPose(pose, 'right-to-left'))} title="Copy the right arm and leg onto the left">
+              Mirror R → L
+            </button>
+          </div>
+          <h3>Place</h3>
+          <Slider label="left / right" unit=" m" min={-5} max={5} step={0.01} value={position[0]} onChange={(x) => setPose({ position: [x, position[1], position[2]] })} />
+          <Slider label="back / front" unit=" m" min={-5} max={5} step={0.01} value={position[2]} onChange={(z) => setPose({ position: [position[0], position[1], z] })} />
+          <Slider label="up / down" unit=" m" min={-1.5} max={2} step={0.01} value={position[1]} onChange={(y) => setPose({ position: [position[0], y, position[2]] })} />
+          <Slider label="turn around" unit="°" min={-180} max={180} step={1} value={joints.pelvis?.turn ?? 0} onChange={(degrees) => setMotion('pelvis', 'turn', degrees)} />
+        </section>
+      )}
+      <button className="more-toggle" onClick={props.onToggleMore} aria-expanded={isShowingMore}>
+        {isShowingMore ? 'Less' : 'More: numbers, body part list, place'}
+      </button>
+    </>
+  );
+}
+
+interface LibraryCardProps extends PanelProps {
   selected: SceneCharacter;
   myPoses: PoseFile[];
   onApplyPose: (file: PoseFile) => void;
   onSaveMyPoses: (poses: PoseFile[]) => void;
-  onShareCharacter: () => void;
 }
 
-function CharacterEditor(props: CharacterEditorProps) {
-  const { selected, selectedControl, onSelectControl, onUpdateCharacter, onRemoveCharacter, myPoses, onApplyPose, onSaveMyPoses } = props;
+function LibraryCard({ selected, onUpdateCharacter, myPoses, onApplyPose, onSaveMyPoses }: LibraryCardProps) {
   const { profile, pose } = selected;
+  const joints = pose.joints ?? {};
   const [poseName, setPoseName] = useState('');
   const [handSide, setHandSide] = useState<HandSide>('both');
-  const position = pose.position ?? [0, 0, 0];
-  const joints = pose.joints ?? {};
-  const control = selectedControl ? CONTROLS[selectedControl] : null;
-
-  const setPose = (change: Partial<typeof pose>) => onUpdateCharacter(selected.id, { pose: { ...pose, ...change } });
-  const setMotion = (controlName: string, motion: string, degrees: number) =>
-    setPose({ joints: { ...joints, [controlName]: { ...joints[controlName], [motion]: degrees } } });
-  const setProfile = (change: Partial<CharacterProfile>) => onUpdateCharacter(selected.id, { profile: { ...profile, ...change } });
-
-  const downloadProfile = () => {
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(new Blob([JSON.stringify(profile, null, 2)], { type: 'application/json' }));
-    link.download = `${profile.name.toLowerCase().replace(/\s+/g, '-')}.oc.json`;
-    link.click();
-    URL.revokeObjectURL(link.href);
-  };
 
   // The heading is where the character faces in the scene, not part of the pose itself.
   const currentPoseFile = (name: string): PoseFile => {
@@ -361,6 +617,84 @@ function CharacterEditor(props: CharacterEditorProps) {
     URL.revokeObjectURL(link.href);
   };
 
+  return (
+    <>
+      <p className="hint">Tap a pose to put {profile.name} in it. It keeps its place and the way it faces.</p>
+      <div className="row">
+        {PRESET_POSES.map((file) => (
+          <button key={file.name} onClick={() => onApplyPose(file)}>
+            {file.name}
+          </button>
+        ))}
+      </div>
+
+      <h3>My poses</h3>
+      {myPoses.length === 0 && <p className="hint">None yet. Pose a character, name it below and save it.</p>}
+      <div className="row">
+        {myPoses.map((file) => (
+          <span key={file.name} className="pose-chip">
+            <button onClick={() => onApplyPose(file)}>{file.name}</button>
+            <button className="danger" title={`Forget ${file.name}`} onClick={() => onSaveMyPoses(myPoses.filter((entry) => entry.name !== file.name))}>
+              ✕
+            </button>
+          </span>
+        ))}
+      </div>
+      <label className="field">
+        Pose name
+        <input value={poseName} placeholder={`${profile.name} pose`} onChange={(event) => setPoseName(event.target.value)} />
+      </label>
+      <div className="row">
+        <button
+          onClick={() => {
+            const file = currentPoseFile(poseName.trim() || `${profile.name} pose`);
+            onSaveMyPoses([...myPoses.filter((entry) => entry.name !== file.name), file]);
+            setPoseName('');
+          }}
+        >
+          Save to My poses
+        </button>
+        <button onClick={downloadPose}>Download pose</button>
+      </div>
+
+      <h3>Hands</h3>
+      <div className="row">
+        <select value={handSide} onChange={(event) => setHandSide(event.target.value as HandSide)} aria-label="Which hand">
+          {HAND_SIDES.map(({ side, label }) => (
+            <option key={side} value={side}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="row">
+        {Object.entries(HAND_SHAPES).map(([name, shape]) => (
+          <button key={name} onClick={() => onUpdateCharacter(selected.id, { pose: applyHandShape(pose, handSide, name) })}>
+            {shape.label}
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+interface BodyCardProps extends PanelProps {
+  selected: SceneCharacter;
+  onShareCharacter: () => void;
+}
+
+function BodyCard({ selected, onUpdateCharacter, onRemoveCharacter, onShareCharacter, isFrontView, onToggleFrontView }: BodyCardProps) {
+  const { profile } = selected;
+  const setProfile = (change: Partial<CharacterProfile>) => onUpdateCharacter(selected.id, { profile: { ...profile, ...change } });
+
+  const downloadProfile = () => {
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob([JSON.stringify(profile, null, 2)], { type: 'application/json' }));
+    link.download = `${profile.name.toLowerCase().replace(/\s+/g, '-')}.oc.json`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+
   const pickReference = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -370,183 +704,63 @@ function CharacterEditor(props: CharacterEditorProps) {
 
   return (
     <>
-      <details open>
-        <summary>Pose</summary>
-        <p className="hint">Drag a body part to bend it. Drag a hand or foot and the whole limb follows. Double-click a part to look closer. Press ? for every shortcut.</p>
-        <select value={selectedControl ?? ''} onChange={(event) => onSelectControl(event.target.value || null)}>
-          <option value="">— choose a body part —</option>
-          {Object.keys(CONTROLS).map((name) => (
-            <option key={name} value={name}>
-              {partName(name)}
-            </option>
-          ))}
-        </select>
-        {control &&
-          selectedControl &&
-          Object.entries(control.motions).map(([motionName, motion]) => (
-            <Slider
-              key={motionName}
-              label={motionWords(selectedControl, motionName).label}
-              ends={[motionWords(selectedControl, motionName).low, motionWords(selectedControl, motionName).high]}
-              unit="°"
-              min={motion.min}
-              max={motion.max}
-              step={1}
-              value={joints[selectedControl]?.[motionName] ?? 0}
-              onChange={(degrees) => setMotion(selectedControl, motionName, degrees)}
-            />
-          ))}
-        <div className="row">
-          {selectedControl && (
-            <button
-              onClick={() => {
-                const { [selectedControl]: _removed, ...rest } = joints;
-                setPose({ joints: rest });
-              }}
-            >
-              Reset this part
-            </button>
-          )}
-          <button onClick={() => setPose({ joints: joints.pelvis?.turn ? { pelvis: { turn: joints.pelvis.turn } } : {} })}>Reset pose</button>
-        </div>
-        <div className="row">
-          <button onClick={() => setPose(mirrorPose(pose, 'left-to-right'))} title="Copy the left arm and leg onto the right">
-            Mirror L → R
-          </button>
-          <button onClick={() => setPose(mirrorPose(pose, 'right-to-left'))} title="Copy the right arm and leg onto the left">
-            Mirror R → L
-          </button>
-          <button onClick={() => setPose(mirrorPose(pose, 'flip'))} title="Swap left and right">
-            Flip
-          </button>
-        </div>
-        <div className="row">
-          <select value={handSide} onChange={(event) => setHandSide(event.target.value as HandSide)} aria-label="Which hand">
-            {HAND_SIDES.map(({ side, label }) => (
-              <option key={side} value={side}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="row">
-          {Object.entries(HAND_SHAPES).map(([name, shape]) => (
-            <button key={name} onClick={() => setPose(applyHandShape(pose, handSide, name))}>
-              {shape.label}
-            </button>
-          ))}
-        </div>
-      </details>
+      <label className="field">
+        Name
+        <input value={profile.name} onChange={(event) => setProfile({ name: event.target.value })} />
+      </label>
+      <label className="field">
+        Color
+        <input type="color" value={profile.color} onChange={(event) => setProfile({ color: event.target.value })} />
+      </label>
+      <Slider label="Height" unit=" cm" min={50} max={260} step={1} value={profile.heightCm} onChange={(heightCm) => setProfile({ heightCm })} />
+      {PROPORTION_SLIDERS.map((slider) => (
+        <Slider
+          key={slider.key}
+          label={slider.label}
+          min={slider.min}
+          max={slider.max}
+          step={slider.step}
+          value={profile.proportions[slider.key]}
+          onChange={(value) => setProfile({ proportions: { ...profile.proportions, [slider.key]: value } })}
+        />
+      ))}
+      {BUILD_SLIDERS.map((slider) => (
+        <Slider key={slider.key} label={slider.label} min={slider.min} max={slider.max} step={slider.step} value={profile.build[slider.key]} onChange={(value) => setProfile({ build: { ...profile.build, [slider.key]: value } })} />
+      ))}
 
-      <TouchEditor key={selected.id} characters={props.characters} selected={selected} onUpdateCharacter={onUpdateCharacter} />
-
-      <details>
-        <summary>Pose library</summary>
-        <div className="row">
-          {PRESET_POSES.map((file) => (
-            <button key={file.name} onClick={() => onApplyPose(file)}>
-              {file.name}
-            </button>
-          ))}
-        </div>
-        <p className="hint">My poses (kept in this browser):</p>
-        {myPoses.length === 0 && <p className="hint">None yet.</p>}
-        <div className="row">
-          {myPoses.map((file) => (
-            <span key={file.name} className="pose-chip">
-              <button onClick={() => onApplyPose(file)}>{file.name}</button>
-              <button className="danger" title={`Forget ${file.name}`} onClick={() => onSaveMyPoses(myPoses.filter((entry) => entry.name !== file.name))}>
-                ✕
-              </button>
-            </span>
-          ))}
-        </div>
-        <label className="field">
-          Pose name
-          <input value={poseName} placeholder={`${profile.name} pose`} onChange={(event) => setPoseName(event.target.value)} />
-        </label>
-        <div className="row">
-          <button
-            onClick={() => {
-              const file = currentPoseFile(poseName.trim() || `${profile.name} pose`);
-              onSaveMyPoses([...myPoses.filter((entry) => entry.name !== file.name), file]);
-              setPoseName('');
-            }}
-          >
-            Save to My poses
-          </button>
-          <button onClick={downloadPose}>Download pose</button>
-        </div>
-      </details>
-
-      <details>
-        <summary>Place</summary>
-        <Slider label="left / right" unit=" m" min={-5} max={5} step={0.01} value={position[0]} onChange={(x) => setPose({ position: [x, position[1], position[2]] })} />
-        <Slider label="back / front" unit=" m" min={-5} max={5} step={0.01} value={position[2]} onChange={(z) => setPose({ position: [position[0], position[1], z] })} />
-        <Slider label="up / down" unit=" m" min={-1.5} max={2} step={0.01} value={position[1]} onChange={(y) => setPose({ position: [position[0], y, position[2]] })} />
-        <Slider label="turn" unit="°" min={-180} max={180} step={1} value={joints.pelvis?.turn ?? 0} onChange={(degrees) => setMotion('pelvis', 'turn', degrees)} />
-        <div className="row">
-          <button onClick={() => setPose(dropToFloor(buildRig(profile), pose, props.sceneProps.flatMap(propBoxes)))} title="Move up or down until the lowest body part touches the floor, or a seat or step just under it">
-            Drop to floor
-          </button>
-        </div>
-      </details>
-
-      <details>
-        <summary>Body</summary>
-        <label className="field">
-          Name
-          <input value={profile.name} onChange={(event) => setProfile({ name: event.target.value })} />
-        </label>
-        <label className="field">
-          Color
-          <input type="color" value={profile.color} onChange={(event) => setProfile({ color: event.target.value })} />
-        </label>
-        <Slider label="Height" unit=" cm" min={50} max={260} step={1} value={profile.heightCm} onChange={(heightCm) => setProfile({ heightCm })} />
-        {PROPORTION_SLIDERS.map((slider) => (
-          <Slider
-            key={slider.key}
-            label={slider.label}
-            min={slider.min}
-            max={slider.max}
-            step={slider.step}
-            value={profile.proportions[slider.key]}
-            onChange={(value) => setProfile({ proportions: { ...profile.proportions, [slider.key]: value } })}
-          />
-        ))}
-        {BUILD_SLIDERS.map((slider) => (
-          <Slider key={slider.key} label={slider.label} min={slider.min} max={slider.max} step={slider.step} value={profile.build[slider.key]} onChange={(value) => setProfile({ build: { ...profile.build, [slider.key]: value } })} />
-        ))}
-        <div className="row">
-          <button onClick={downloadProfile}>Download character</button>
-          <button onClick={props.onShareCharacter}>Share link</button>
-          <button className="danger" onClick={() => onRemoveCharacter(selected.id)}>
-            Remove
-          </button>
-        </div>
-      </details>
-
-      <details>
-        <summary>Reference image</summary>
-        <p className="hint">Use a sprite cropped from the top of the head to the feet. It is scaled to the character's height and placed behind it. Use "Front view" to line them up.</p>
+      <h3>Reference image</h3>
+      <p className="hint">A sprite cropped from the top of the head to the feet. It is scaled to the character's height and placed behind it; the flat front view lines them up.</p>
+      <div className="row">
         <label className="button">
           Choose image
           <input type="file" accept="image/*" onChange={pickReference} hidden />
         </label>
-        {selected.reference && (
-          <>
-            <Slider label="Opacity" min={0.1} max={1} step={0.05} value={selected.reference.opacity} onChange={(opacity) => onUpdateCharacter(selected.id, { reference: { ...selected.reference!, opacity } })} />
-            <button
-              onClick={() => {
-                URL.revokeObjectURL(selected.reference!.url);
-                onUpdateCharacter(selected.id, { reference: undefined });
-              }}
-            >
-              Remove image
-            </button>
-          </>
-        )}
-      </details>
+        <button className={isFrontView ? 'is-active' : ''} aria-pressed={isFrontView} onClick={onToggleFrontView}>
+          Flat front view
+        </button>
+      </div>
+      {selected.reference && (
+        <>
+          <Slider label="Opacity" min={0.1} max={1} step={0.05} value={selected.reference.opacity} onChange={(opacity) => onUpdateCharacter(selected.id, { reference: { ...selected.reference!, opacity } })} />
+          <button
+            onClick={() => {
+              URL.revokeObjectURL(selected.reference!.url);
+              onUpdateCharacter(selected.id, { reference: undefined });
+            }}
+          >
+            Remove image
+          </button>
+        </>
+      )}
+
+      <h3>Keep or share</h3>
+      <div className="row">
+        <button onClick={downloadProfile}>Download character</button>
+        <button onClick={onShareCharacter}>Share link</button>
+        <button className="danger" onClick={() => onRemoveCharacter(selected.id)}>
+          Remove {profile.name}
+        </button>
+      </div>
     </>
   );
 }
@@ -588,7 +802,7 @@ function TouchEditor({ characters, selected, onUpdateCharacter }: { characters: 
 
   return (
     <details onToggle={(event) => setIsOpen(event.currentTarget.open)}>
-      <summary>Touch</summary>
+      <summary>Touch another body part</summary>
       <label className="field">
         Put the
         <select value={part} onChange={(event) => setPart(event.target.value)}>
@@ -661,8 +875,8 @@ function PropsEditor({ sceneProps, selected, selectedPropId, onSelectProp, onCha
   const sizeLabels = selectedProp?.kind === 'chair' || selectedProp?.kind === 'stool' ? ['Width', 'Seat height', 'Depth'] : ['Width', 'Height', 'Depth'];
 
   return (
-    <details>
-      <summary>Props</summary>
+    <section className="card-section">
+      <h3>Props</h3>
       <p className="hint">Furniture to sit on, lean on or stand on. A seat or step appears under the selected character: pick a sitting pose and it lands on the seat. Drag a prop on the stage to move it.</p>
       <div className="row">
         {(Object.keys(PROP_KINDS) as PropKind[]).map((kind) => (
@@ -724,14 +938,30 @@ function PropsEditor({ sceneProps, selected, selectedPropId, onSelectProp, onCha
           </div>
         </>
       )}
-    </details>
+    </section>
   );
 }
 
-function CameraEditor({ views, lensMm, onChangeLens, getCameraView, onGoToView, onChangeViews }: PanelProps) {
+function CameraEditor({ views, lensMm, onChangeLens, getCameraView, onGoToView, onChangeViews, onLookFrom, onFrameAll, isFrontView, onToggleFrontView, selected }: PanelProps) {
   return (
-    <details>
-      <summary>Camera</summary>
+    <>
+      <p className="hint">{selected ? `Look at ${selected.profile.name} from:` : 'Look from:'}</p>
+      <div className="row">
+        {VIEW_BUTTONS.map(({ view, label, key }) => (
+          <button key={view} disabled={!selected} onClick={() => onLookFrom(view)} title={`Key ${key}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="row">
+        <button onClick={onFrameAll} title="Key Shift F, or double-click empty space">
+          See everyone
+        </button>
+        <button className={isFrontView ? 'is-active' : ''} aria-pressed={isFrontView} onClick={onToggleFrontView} title="A flat view with no perspective, to line up a reference image">
+          Flat front view
+        </button>
+      </div>
+      <h3>Lens</h3>
       <p className="hint">Lens in mm. Wide lenses stretch depth (a hand toward the camera looks huge); long ones flatten it. The characters keep their size on screen.</p>
       <div className="row">
         {LENS_PRESETS.map((preset) => (
@@ -769,7 +999,7 @@ function CameraEditor({ views, lensMm, onChangeLens, getCameraView, onGoToView, 
         </div>
       )}
       <p className="hint">Saved scenes and share links open from the angle you leave the camera at.</p>
-    </details>
+    </>
   );
 }
 
@@ -784,8 +1014,8 @@ function LightsEditor({ lights, background, selectedLightId, onSelectLight, onCh
   const labelOf = (light: LightEntry) => LIGHT_KINDS.find((entry) => entry.kind === light.kind)!.label;
 
   return (
-    <details>
-      <summary>Lights</summary>
+    <section className="card-section">
+      <h3>Lights</h3>
       <p className="hint">Presets replace all lights:</p>
       <div className="row">
         {LIGHT_PRESETS.map((preset) => (
@@ -889,7 +1119,7 @@ function LightsEditor({ lights, background, selectedLightId, onSelectLight, onCh
         Background
         <input type="color" value={background} onChange={(event) => onChangeBackground(event.target.value)} />
       </label>
-    </details>
+    </section>
   );
 }
 
@@ -899,8 +1129,7 @@ function ImageExport({ onExport }: { onExport: (request: ExportRequest) => void 
   const [isShowingGuides, setIsShowingGuides] = useState(false);
 
   return (
-    <details>
-      <summary>Save image</summary>
+    <>
       <p className="hint">Saves what the stage shows now, without the light markers and the selection color.</p>
       <label className="field">
         Size
@@ -921,7 +1150,7 @@ function ImageExport({ onExport }: { onExport: (request: ExportRequest) => void 
       <div className="row">
         <button onClick={() => onExport({ scale, isTransparent, isShowingGuides })}>Save PNG</button>
       </div>
-    </details>
+    </>
   );
 }
 // #endregion
@@ -930,6 +1159,7 @@ function ImageExport({ onExport }: { onExport: (request: ExportRequest) => void 
 interface SliderProps {
   label: string;
   ends?: [string, string];
+  isShowingValue?: boolean;
   unit?: string;
   min: number;
   max: number;
@@ -938,16 +1168,18 @@ interface SliderProps {
   onChange: (value: number) => void;
 }
 
-function Slider({ label, ends, unit = '', min, max, step, value, onChange }: SliderProps) {
+function Slider({ label, ends, isShowingValue = true, unit = '', min, max, step, value, onChange }: SliderProps) {
   const decimals = step < 0.1 ? 2 : step < 1 ? 1 : 0;
   return (
     <label className="slider">
       <span>
         {label.charAt(0).toUpperCase() + label.slice(1)}
-        <output>
-          {value.toFixed(decimals)}
-          {unit}
-        </output>
+        {isShowingValue && (
+          <output>
+            {value.toFixed(decimals)}
+            {unit}
+          </output>
+        )}
       </span>
       <input type="range" min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.target.value))} />
       {ends && (

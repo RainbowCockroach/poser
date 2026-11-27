@@ -19,7 +19,7 @@ const PART_NAMES: Record<string, string> = {
   shoulder_girdle: 'shoulder (shrug)',
   shoulder: 'upper arm',
   elbow: 'elbow and forearm',
-  wrist: 'wrist',
+  wrist: 'hand',
   thumb: 'thumb',
   index: 'index finger',
   middle: 'middle finger',

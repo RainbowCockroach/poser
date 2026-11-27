@@ -134,6 +134,6 @@ with the same meaning (abduction is always "away from the body").
 
 Tips: flexion and abduction on the same ball joint blend (90 + 90 = horizontal, diagonal). Raising an
 arm lifts the shoulder by itself, so don't add `elevation` for that. A character that sits or kneels
-needs `position[1]` lowered; in the app "Drop to floor" (Place) does it. Code that runs the core library
+needs `position[1]` lowered; in the app "Drop to floor" (Pose mode, key G) does it. Code that runs the core library
 can call `dropToFloor(rig, pose)` and `reach(rig, pose, goals, motions)` from `src/core/reach.ts`, and
 `touch`, `separate`, `findOverlaps` from `src/core/body.ts`.

@@ -13,11 +13,11 @@ import { Canvas, useThree } from '@react-three/fiber';
 import { Grid, Html, OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei';
 import { Box3, MOUSE, PerspectiveCamera as ThreePerspectiveCamera, SRGBColorSpace, TextureLoader, Vector2, Vector3, type Texture } from 'three';
 import { Mannequin } from './Mannequin';
-import { Panel } from './Panel';
+import { Panel, type Mode, type ViewName } from './Panel';
 import { Help } from './Help';
 import { SceneLights } from './SceneLights';
 import { buildRig, normalizeProfile, type CharacterProfile } from '../core/rig';
-import { CONTROL_FOR_BONE, CONTROLS, forwardKinematics, mirrorPose, solvePose, type Pose } from '../core/pose';
+import { CONTROL_FOR_BONE, CONTROLS, copyLimbToOtherSide, forwardKinematics, mirrorPose, solvePose, type Pose } from '../core/pose';
 import { dropToFloor } from '../core/reach';
 import { DEFAULT_LIGHTS, type SceneLight } from '../core/lights';
 import { useDragPosing } from './useDragPosing';
@@ -80,6 +80,10 @@ const DOUBLE_CLICK_MILLISECONDS = 350;
 const MIN_FRAME_RADIUS = 0.12;
 const FRAME_MARGIN = 0.08;
 const THREE_QUARTER_DEGREES = 35;
+// On screens wider than phones the mode rail and the card float over the stage; these match styles.css (rail and card plus gaps).
+const WIDE_STAGE_PIXELS = 760;
+const RAIL_SPACE_PIXELS = 94;
+const CARD_SPACE_PIXELS = 340;
 // Safari and every iPhone/iPad browser (WebKit) put the whole scene in shadow with PCF shadow maps; variance shadow maps work there.
 // three.js can't do variance shadows for lamps (point lights), so lamps cast no shadow on those browsers.
 export const SHADOW_TYPE = /AppleWebKit/.test(navigator.userAgent) && !/Chrome|Android/.test(navigator.userAgent) ? 'variance' : 'percentage';
@@ -125,8 +129,10 @@ export function App() {
     setCameraJump(view);
   };
 
+  const [mode, setMode] = useState<Mode>('pose');
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [isCleanView, setIsCleanView] = useState(false);
+  const [isCardFolded, setIsCardFolded] = useState(false);
   const stageElement = useRef<HTMLDivElement>(null);
   const lastMissedClick = useRef(0);
 
@@ -137,9 +143,12 @@ export function App() {
     const radius = Math.max(MIN_FRAME_RADIUS, ...points.map((point) => point.distanceTo(center))) + FRAME_MARGIN;
     const current = cameraView.current;
     const direction = towardCamera ?? (current ? new Vector3(...current.position).sub(new Vector3(...current.target)).normalize() : new Vector3(0.1, 0.2, 1).normalize());
-    const stage = stageElement.current;
+    const stageWidth = stageElement.current?.clientWidth ?? 1;
+    const stageHeight = stageElement.current?.clientHeight ?? 1;
+    const isWide = stageWidth > WIDE_STAGE_PIXELS && !isCleanView;
+    const freeWidth = isWide ? stageWidth - RAIL_SPACE_PIXELS - (isCardFolded ? 0 : CARD_SPACE_PIXELS) : stageWidth;
     const halfVertical = (fieldOfViewDegrees(lensMm) * Math.PI) / 360;
-    const halfHorizontal = Math.atan(Math.tan(halfVertical) * (stage ? stage.clientWidth / Math.max(1, stage.clientHeight) : 1));
+    const halfHorizontal = Math.atan(Math.tan(halfVertical) * (freeWidth / Math.max(1, stageHeight)));
     const distance = radius / Math.sin(Math.min(halfVertical, halfHorizontal));
     goToView({ position: center.clone().addScaledVector(direction, distance).toArray(), target: center.toArray(), lensMm });
   };
@@ -200,6 +209,23 @@ export function App() {
 
   const selected = characters.find((character) => character.id === selectedId) ?? null;
 
+  // The selected character seen from its own front, its left side, its back, or between front and side.
+  const lookFrom = (view: ViewName) => {
+    if (!selected) return;
+    const heading = ((selected.pose.joints?.pelvis?.turn ?? 0) * Math.PI) / 180;
+    const facing = new Vector3(Math.sin(heading), 0, Math.cos(heading));
+    const itsLeft = new Vector3(Math.cos(heading), 0, -Math.sin(heading));
+    const threeQuarter = (THREE_QUARTER_DEGREES * Math.PI) / 180;
+    const direction = {
+      front: facing,
+      side: itsLeft,
+      back: facing.clone().negate(),
+      'three-quarter': facing.clone().multiplyScalar(Math.cos(threeQuarter)).addScaledVector(itsLeft, Math.sin(threeQuarter)).setY(0.25).normalize(),
+    }[view];
+    frame(bonePoints(selected), direction);
+  };
+  const frameAll = () => frame(characters.flatMap((character) => bonePoints(character)));
+
   // The shortcut list people see is in Help.tsx; keep the two in step.
   const handleKey = (event: KeyboardEvent) => {
     const target = event.target;
@@ -233,24 +259,14 @@ export function App() {
     }
     if (key === 'f') {
       if (selected && selectedControl && !event.shiftKey) return lookCloser(selected, selectedControl);
-      return frame((selected && !event.shiftKey ? [selected] : characters).flatMap((character) => bonePoints(character)));
+      if (!selected || event.shiftKey) return frameAll();
+      return frame(bonePoints(selected));
     }
     if (!selected) return;
 
     const joints = selected.pose.joints ?? {};
-    if (['1', '2', '3', '4'].includes(key)) {
-      const heading = ((joints.pelvis?.turn ?? 0) * Math.PI) / 180;
-      const facing = new Vector3(Math.sin(heading), 0, Math.cos(heading));
-      const itsLeft = new Vector3(Math.cos(heading), 0, -Math.sin(heading));
-      const threeQuarter = (THREE_QUARTER_DEGREES * Math.PI) / 180;
-      const direction = {
-        '1': facing,
-        '2': itsLeft,
-        '3': facing.clone().negate(),
-        '4': facing.clone().multiplyScalar(Math.cos(threeQuarter)).addScaledVector(itsLeft, Math.sin(threeQuarter)).setY(0.25).normalize(),
-      }[key]!;
-      return frame(bonePoints(selected), direction);
-    }
+    const view = ({ '1': 'front', '2': 'side', '3': 'back', '4': 'three-quarter' } as Record<string, ViewName>)[key];
+    if (view) return lookFrom(view);
     if (key === 'g') return updateCharacter(selected.id, { pose: dropToFloor(buildRig(selected.profile), selected.pose, sceneProps.flatMap(propBoxes)) });
     if (key === 'x') return updateCharacter(selected.id, { pose: mirrorPose(selected.pose, 'flip') });
     if (key === 'r' && event.shiftKey) return updateCharacter(selected.id, { pose: { ...selected.pose, joints: joints.pelvis?.turn ? { pelvis: { turn: joints.pelvis.turn } } : {} } });
@@ -260,9 +276,7 @@ export function App() {
       const { [selectedControl]: _removed, ...rest } = joints;
       return updateCharacter(selected.id, { pose: { ...selected.pose, joints: rest } });
     }
-    if (key === 'm' && /_[lr]$/.test(selectedControl)) {
-      updateCharacter(selected.id, { pose: mirrorPose(selected.pose, selectedControl.endsWith('_l') ? 'left-to-right' : 'right-to-left') });
-    }
+    if (key === 'm') updateCharacter(selected.id, { pose: copyLimbToOtherSide(selected.pose, selectedControl) });
   };
   const latestHandleKey = useRef(handleKey);
   latestHandleKey.current = handleKey;
@@ -290,7 +304,7 @@ export function App() {
           onPointerMissed={() => {
             setSelectedControl(null);
             const now = performance.now();
-            if (now - lastMissedClick.current < DOUBLE_CLICK_MILLISECONDS) frame(characters.flatMap((character) => bonePoints(character)));
+            if (now - lastMissedClick.current < DOUBLE_CLICK_MILLISECONDS) frameAll();
             lastMissedClick.current = now;
           }}
         >
@@ -302,10 +316,14 @@ export function App() {
             selected={selected}
             selectedLightId={selectedLightId}
             selectedPropId={selectedPropId}
-            onSelectProp={setSelectedPropId}
+            onSelectProp={(id) => {
+              setSelectedPropId(id);
+              setMode('scene');
+            }}
             onMoveProp={(id, position, gestureKey) => changeScene((state) => ({ ...state, sceneProps: state.sceneProps.map((prop) => (prop.id === id ? { ...prop, position } : prop)) }), gestureKey)}
             highlightedBones={isCleanView ? [] : highlightedBones}
             isCleanView={isCleanView}
+            isCardFolded={isCardFolded}
             onLookCloser={(character, bone) => {
               const controlName = CONTROL_FOR_BONE[bone];
               if (controlName) lookCloser(character, controlName);
@@ -322,25 +340,11 @@ export function App() {
             onSelect={(id, control) => {
               setSelectedId(id);
               setSelectedControl(control);
+              if (mode === 'scene') setMode('pose');
             }}
             onPose={(id, pose, gestureKey) => updateCharacter(id, { pose }, gestureKey)}
           />
         </Canvas>
-        <div className="stage-tools">
-          <button onClick={() => setIsFrontView(!isFrontView)}>{isFrontView ? '3D view' : 'Front view'}</button>
-          <button onClick={() => travel('undo')} disabled={scene.past.length === 0} title="Undo (Ctrl/Cmd+Z)">
-            Undo
-          </button>
-          <button onClick={() => travel('redo')} disabled={scene.future.length === 0} title="Redo (Ctrl/Cmd+Shift+Z)">
-            Redo
-          </button>
-          <button className={isPinFeet ? 'is-active' : ''} aria-pressed={isPinFeet} onClick={() => setIsPinFeet(!isPinFeet)} title="When on, dragging the hips bends the legs and keeps the feet where they are (P)">
-            {isPinFeet ? 'Feet pinned' : 'Pin feet'}
-          </button>
-          <button onClick={() => setIsHelpOpen(true)} title="Mouse, touch and keyboard shortcuts (?)" aria-label="Shortcuts">
-            ?
-          </button>
-        </div>
         {isCleanView && (
           <button className="show-controls" onClick={() => setIsCleanView(false)}>
             Show controls
@@ -368,6 +372,20 @@ export function App() {
         onSelectLight={setSelectedLightId}
         onSelectProp={setSelectedPropId}
         onChangeProps={(update, key) => changeScene((state) => ({ ...state, sceneProps: update(state.sceneProps) }), key)}
+        mode={mode}
+        onChangeMode={setMode}
+        onLookFrom={lookFrom}
+        onFrameAll={frameAll}
+        isFrontView={isFrontView}
+        onToggleFrontView={() => setIsFrontView(!isFrontView)}
+        isPinFeet={isPinFeet}
+        onTogglePinFeet={() => setIsPinFeet(!isPinFeet)}
+        canUndo={scene.past.length > 0}
+        canRedo={scene.future.length > 0}
+        onTravel={travel}
+        onOpenHelp={() => setIsHelpOpen(true)}
+        isCardFolded={isCardFolded}
+        onFoldCard={setIsCardFolded}
         views={views}
         lensMm={lensMm}
         onChangeLens={(next) => {
@@ -404,7 +422,7 @@ export function App() {
         }}
         onRemoveCharacter={(id) => {
           changeCharacters((list) => list.filter((character) => character.id !== id), 'remove');
-          setSelectedId(null);
+          setSelectedId(characters.find((character) => character.id !== id)?.id ?? null);
           setSelectedControl(null);
         }}
       />
@@ -424,6 +442,7 @@ interface StageProps {
   onMoveProp: (id: string, position: Vec3, gestureKey: string) => void;
   highlightedBones: string[];
   isCleanView: boolean;
+  isCardFolded: boolean;
   onLookCloser: (character: SceneCharacter, bone: string) => void;
   isFrontView: boolean;
   isPinFeet: boolean;
@@ -444,9 +463,13 @@ function Stage(props: StageProps) {
   const viewportWidth = useThree((state) => state.size.width);
   // Start far enough back that everyone fits, even on a narrow phone held upright. Later the camera is the user's.
   // Recomputed only when a whole scene is opened (file or share link), so normal editing never moves the camera.
+  const isWide = viewportWidth > WIDE_STAGE_PIXELS && !props.isCleanView;
+  const coveredLeft = isWide ? RAIL_SPACE_PIXELS : 0;
+  const coveredRight = isWide && !props.isCardFolded ? CARD_SPACE_PIXELS : 0;
   const startDistance = useMemo(() => {
     const halfSpread = Math.max(0, ...characters.map((character) => Math.abs(character.pose.position?.[0] ?? 0))) + 0.6;
-    const horizontalHalfTangent = Math.tan((fieldOfViewDegrees(props.lensMm) * Math.PI) / 360) * (viewportWidth / Math.max(1, viewportHeight));
+    const freeWidth = viewportWidth - coveredLeft - coveredRight;
+    const horizontalHalfTangent = Math.tan((fieldOfViewDegrees(props.lensMm) * Math.PI) / 360) * (freeWidth / Math.max(1, viewportHeight));
     return Math.max(5.5, halfSpread / horizontalHalfTangent + 0.5);
   }, [props.sceneVersion]);
   const renderer = useThree((state) => state.gl);
@@ -468,6 +491,15 @@ function Stage(props: StageProps) {
 
   // Mannequin and light targets move their three.js objects directly, which "demand" drawing doesn't notice.
   useEffect(() => invalidate());
+
+  // The picture slides sideways so the middle of the view is the middle of the stage the rail and card leave free.
+  useEffect(() => {
+    const shift = (coveredRight - coveredLeft) / 2;
+    if (shift === 0) camera.clearViewOffset();
+    else camera.setViewOffset(viewportWidth, viewportHeight, shift, 0, viewportWidth, viewportHeight);
+    camera.updateProjectionMatrix();
+    invalidate();
+  }, [camera, viewportWidth, viewportHeight, coveredLeft, coveredRight]);
 
   const reportCamera = () => {
     const live = liveCamera();

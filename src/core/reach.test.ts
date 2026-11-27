@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
 import { buildRig, type CharacterProfile } from './rig.ts';
-import { CONTROLS, forwardKinematics, mirrorPose, solvePose, type Pose } from './pose.ts';
+import { CONTROLS, copyLimbToOtherSide, forwardKinematics, mirrorPose, solvePose, type Pose } from './pose.ts';
 import { dragMotions, dropToFloor, legMotions, reach } from './reach.ts';
 import potat from '../../characters/potat.oc.json';
 import bush from '../../characters/bush.oc.json';
@@ -64,6 +64,16 @@ describe('mirror pose', () => {
     expect(mirrored.joints!.shoulder_r).toEqual({ abduction: 80 });
     expect(mirrored.joints!.knee_r).toBeUndefined();
     expect(mirrored.joints!.lumbar).toEqual(pose.joints!.lumbar);
+  });
+
+  it('copies one arm or leg onto the other side and leaves the rest', () => {
+    const withHand: Pose = { joints: { ...pose.joints, index_l: { base_flexion: 60 }, elbow_r: { flexion: 90 } } };
+    const copied = copyLimbToOtherSide(withHand, 'index_l');
+    expect(copied.joints!.shoulder_r).toEqual({ abduction: 80 });
+    expect(copied.joints!.index_r).toEqual({ base_flexion: 60 });
+    expect(copied.joints!.elbow_r).toBeUndefined();
+    expect(copied.joints!.knee_r).toEqual({ flexion: 30 });
+    expect(copyLimbToOtherSide(withHand, 'knee_r').joints!.knee_l).toEqual({ flexion: 30 });
   });
 
   it('flips sides, bends the spine the other way and keeps the heading', () => {

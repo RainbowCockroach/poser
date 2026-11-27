@@ -86,8 +86,9 @@ no wheel or middle button), so extra buttons and keys are only faster ways.
     the CLI keep the anatomical names), hover highlight, a small hand or foot is grabbed whole (fingers and toes take
     over once it is 110 px on screen), double-click to look closer, shortcut keys with a "?" sheet, middle-drag and
     Alt-drag to turn the camera anywhere, zoom toward the pointer, clean view (H).
-11. New shell: five modes (Pose, Library, Body, Scene, Camera) on a rail (tab bar on phones), a card that shows only
-    the controls of what is selected with exact numbers behind "More", a bottom sheet on phones, files in one menu.
+11. ✅ New shell: five modes (Pose, Library, Body, Scene, Camera) on a rail (tab bar on phones), a card that shows only
+    the controls of what is selected with exact numbers behind "More", a bottom sheet on phones, files in one menu. On wider screens the picture is shifted
+    (camera view offset) so the middle of the view is the middle of the space the rail and card leave free.
 12. Handles on the selected character: dots on hands, feet, elbows, knees, head, chest and hips, one twist ring, a
     floor ring to turn the character, pins per hand and foot, a right-click / long-press menu.
 13. Pictures: thumbnails for poses, hand shapes, lenses and light presets.

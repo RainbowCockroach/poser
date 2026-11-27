@@ -16,6 +16,8 @@ npm run poser -- help   # CLI for agents: render, touch, check, pose (see AGENTS
 - Scenes: "Save scene" writes a `.scene.json` that includes its characters.
 - Share link: one link opens the whole scene (or one character, from Body) on a friend's phone or computer.
   Everything is inside the link after `#`, so nothing is uploaded.
+- Layout: the ☰ menu opens, saves and shares; five modes (Pose, Library, Body, Scene, Camera) on the left
+  (tabs at the bottom on phones); the card on the right shows only what the mode and the selected part need.
 - Posing: drag a body part to bend it; drag a hand or foot to move the whole limb; drag the hips to move
   the character ("Pin feet" keeps the feet planted). Undo with Ctrl/Cmd+Z.
 - A hand or foot that is small on screen is grabbed whole, so pulling it moves the arm or leg; double-click it

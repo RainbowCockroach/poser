@@ -18,7 +18,7 @@ const KEY_ROWS: { keys: string[]; action: string }[] = [
   { keys: ['F'], action: 'Look closer at the selected part or character (Shift F: see everyone)' },
   { keys: ['1', '2', '3', '4'], action: 'See the character from its front, side, back, three-quarter' },
   { keys: ['R'], action: 'Reset the selected part (Shift R: the whole pose)' },
-  { keys: ['M'], action: 'Copy the selected arm or leg side onto the other side' },
+  { keys: ['M'], action: 'Copy the arm or leg of the selected part onto the other side' },
   { keys: ['X'], action: 'Flip the pose left to right' },
   { keys: ['G'], action: 'Drop to the floor' },
   { keys: ['P'], action: 'Pin the feet while the hips move' },

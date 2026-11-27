@@ -171,6 +171,8 @@ export const CONTROL_FOR_BONE: Record<string, string> = Object.fromEntries(
     .reverse(),
 );
 
+const ARM_CONTROLS = ['shoulder_girdle', 'shoulder', 'elbow', 'wrist', 'thumb', 'index', 'middle', 'ring', 'pinky'];
+const LEG_CONTROLS = ['hip', 'knee', 'ankle', 'toes'];
 const ARM_LIFT_BEFORE_GIRDLE_MOVES = 30;
 const MAX_AUTOMATIC_GIRDLE_ELEVATION = 30;
 // #endregion
@@ -273,6 +275,22 @@ export function mirrorPose(pose: Pose, mode: MirrorMode): Pose {
     if (mode === 'flip') joints[otherSide] = angles;
     if (mode === 'left-to-right' && side === 'l') joints[controlName] = joints[otherSide] = angles;
     if (mode === 'right-to-left' && side === 'r') joints[controlName] = joints[otherSide] = angles;
+  }
+  return { ...pose, joints };
+}
+
+// Copies the whole arm (shoulder to fingertips) or leg (hip to toes) that this control belongs to onto the other side.
+export function copyLimbToOtherSide(pose: Pose, controlName: string): Pose {
+  const side = controlName.match(/_(l|r)$/)?.[1];
+  if (!side) return pose;
+  const otherSide = side === 'l' ? 'r' : 'l';
+  const base = controlName.replace(/_(l|r)$/, '');
+  const limb = LEG_CONTROLS.includes(base) ? LEG_CONTROLS : ARM_CONTROLS;
+  const joints = { ...pose.joints };
+  for (const part of limb) {
+    const angles = joints[`${part}_${side}`];
+    if (angles) joints[`${part}_${otherSide}`] = angles;
+    else delete joints[`${part}_${otherSide}`];
   }
   return { ...pose, joints };
 }
